@@ -7,8 +7,8 @@ CheckpointsDir="models"
 mkdir -p models/musetalk models/musetalkV15 models/syncnet models/dwpose models/face-parse-bisent models/sd-vae models/whisper
 
 # Install required packages
-pip install -U "huggingface_hub[cli]"
-pip install gdown
+uv pip install -U "huggingface_hub[cli]"
+uv pip install gdown
 
 # Set HuggingFace mirror endpoint
 export HF_ENDPOINT=https://hf-mirror.com

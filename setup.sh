@@ -6,14 +6,13 @@ cd /workspace
 git clone https://github.com/Fakamoto/MuseTalk
 cd MuseTalk
 
-pip install -U uv
-uv venv --python=python3.10
+pip install -U uv 
+uv venv --python=python3.10 --seed
 . .venv/bin/activate
 
 uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
 
 uv pip install -r requirements.txt
-uv pip install -U huggingface_hub
 
 uv pip install -U openmim
 uv run mim install mmengine
