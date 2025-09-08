@@ -6,12 +6,14 @@ FastAPI server with three endpoints for avatar generation
 
 import os
 import subprocess
+import time
 
 import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
+import uvicorn
 
 # ====================================================================
 # CONFIGURACIÓN GLOBAL
@@ -127,9 +129,13 @@ async def generate_video(
     Endpoint 1: Generate video from scratch (no caching)
     - Receives video and audio files
     - Processes from scratch (preparation=True)
-    - Returns the generated video
+    - Returns the generated video with duration as filename
     """
+    start_time = time.time()
+
     try:
+        print(f"🎬 [GENERATE] Starting video generation for avatar: {avatar_id}")
+
         # Validate file types
         if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
             raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
@@ -158,18 +164,28 @@ async def generate_video(
             if video_files:
                 output_video = video_files[0]
 
+                # Calculate total duration
+                end_time = time.time()
+                duration = end_time - start_time
+
+                # Print duration to terminal
+                print(f"Duration: {duration:.2f}s")
                 # Clean up temp files
                 config_path.unlink(missing_ok=True)
 
                 return FileResponse(
                     path=output_video,
                     media_type='video/mp4',
-                    filename=f"{avatar_id}_generated.mp4"
+                    filename=f"{duration:.2f}s_generated.mp4"
                 )
 
         raise HTTPException(status_code=500, detail="Video generation completed but output file not found")
 
     except Exception as e:
+        # Print error duration if failed
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"Duration: {duration:.2f}s")
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 @app.post("/prepare")
@@ -183,7 +199,11 @@ async def prepare_avatar(
     - Prepares avatar and saves to cache
     - No audio processing needed
     """
+    start_time = time.time()
+
     try:
+        print(f"🔧 [PREPARE] Starting avatar preparation for: {avatar_id}")
+
         # Validate file type
         if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
             raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
@@ -202,12 +222,19 @@ async def prepare_avatar(
         # Run inference (this will prepare the avatar)
         stdout, stderr = run_inference(config_path)
 
+        # Calculate duration
+        end_time = time.time()
+        duration = end_time - start_time
+
+        # Print duration to terminal
+        print(f"Duration: {duration:.2f}s")
         # Mark avatar as prepared in cache
         avatar_cache[avatar_id] = {
             "video_path": video_path,
             "prepared": True,
             "bbox_shift": BBOX_SHIFT,
-            "version": VERSION
+            "version": VERSION,
+            "preparation_time": duration
         }
 
         # Clean up temp config
@@ -216,10 +243,15 @@ async def prepare_avatar(
         return {
             "message": f"Avatar '{avatar_id}' prepared and cached successfully",
             "avatar_id": avatar_id,
-            "status": "prepared"
+            "status": "prepared",
+            "preparation_duration_seconds": duration
         }
 
     except Exception as e:
+        # Print error duration
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"Duration: {duration:.2f}s")
         raise HTTPException(status_code=500, detail=f"Preparation failed: {str(e)}")
 
 @app.post("/generate-fast")
@@ -232,8 +264,13 @@ async def generate_fast(
     - Requires avatar to be prepared first
     - Uses cached avatar for faster generation
     - Only processes audio
+    - Returns video with duration as filename
     """
+    start_time = time.time()
+
     try:
+        print(f"⚡ [FAST-GENERATE] Starting fast generation for avatar: {avatar_id}")
+
         # Check if avatar is prepared
         if avatar_id not in avatar_cache:
             raise HTTPException(
@@ -276,13 +313,19 @@ async def generate_fast(
             if video_files:
                 output_video = video_files[0]
 
+                # Calculate total duration
+                end_time = time.time()
+                duration = end_time - start_time
+
+                # Print duration to terminal
+                print(f"Duration: {duration:.2f}s")
                 # Clean up temp files
                 config_path.unlink(missing_ok=True)
 
                 return FileResponse(
                     path=output_video,
                     media_type='video/mp4',
-                    filename=f"{avatar_id}_fast_generated.mp4"
+                    filename=f"{duration:.2f}s_fast.mp4"
                 )
 
         raise HTTPException(status_code=500, detail="Fast generation completed but output file not found")
@@ -290,6 +333,11 @@ async def generate_fast(
     except HTTPException:
         raise
     except Exception as e:
+        # Print error duration
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"Duration: {duration:.2f}s")
+
         raise HTTPException(status_code=500, detail=f"Fast generation failed: {str(e)}")
 
 @app.get("/cache")
@@ -328,5 +376,6 @@ async def root():
             "DELETE /cache/{avatar_id}": "Clear specific avatar from cache"
         },
         "version": VERSION,
-        "cached_avatars": list(avatar_cache.keys())
+        "cached_avatars": list(avatar_cache.keys()),
+        "note": "All endpoints now print duration to terminal and use duration as filename"
     }
