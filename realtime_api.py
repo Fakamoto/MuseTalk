@@ -118,6 +118,20 @@ def get_model_paths():
 
     return unet_model_path, unet_config
 
+def cleanup_old_configs(avatar_id: str):
+    """Clean up old config files for an avatar to prevent conflicts"""
+    try:
+        if TEMP_DIR.exists():
+            for config_file in TEMP_DIR.glob(f"config_{avatar_id}_*.yaml"):
+                try:
+                    config_file.unlink()
+                    print(f"🗑️ Cleaned up old config file: {config_file.name}")
+                except Exception as e:
+                    print(f"⚠️ Could not delete {config_file.name}: {e}")
+    except Exception as e:
+        print(f"⚠️ Error during config cleanup: {e}")
+
+
 def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, preparation: bool = True):
     """Create temporary YAML config file"""
     print(f"📝 Creating YAML config for avatar: {avatar_id}")
@@ -135,6 +149,9 @@ def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, prepa
 
     print("📄 YAML content to be written:")
     print(yaml_content)
+
+    # Clean up old config files for this avatar to avoid conflicts
+    cleanup_old_configs(avatar_id)
 
     # Write to temporary config file
     config_path = TEMP_DIR / f"config_{avatar_id}_{hash(str(audio_clips))}.yaml"
@@ -395,10 +412,8 @@ async def prepare_avatar(
         # Save uploaded file
         video_path = save_uploaded_file(video, f"{avatar_id}_prepare{video.filename}")
 
-        # Create dummy audio clips (not used in preparation)
-        audio_clips = {
-            "dummy": video_path  # Use video path as dummy
-        }
+        # No audio clips needed during preparation
+        audio_clips = {}
 
         # Create config file with preparation=True
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=True)

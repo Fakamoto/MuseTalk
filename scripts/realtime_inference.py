@@ -400,10 +400,17 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             preparation=data_preparation)
 
-        audio_clips = inference_config[avatar_id]["audio_clips"]
-        for audio_num, audio_path in audio_clips.items():
-            print("Inferring using:", audio_path)
-            avatar.inference(audio_path,
-                           audio_num,
-                           args.fps,
-                           args.skip_save_images)
+        # Skip audio processing during preparation
+        if not data_preparation:
+            audio_clips = inference_config[avatar_id].get("audio_clips", {})
+            if audio_clips:  # Only process if there are actual audio clips
+                for audio_num, audio_path in audio_clips.items():
+                    print("Inferring using:", audio_path)
+                    avatar.inference(audio_path,
+                                   audio_num,
+                                   args.fps,
+                                   args.skip_save_images)
+            else:
+                print("No audio clips to process - this appears to be a preparation-only run")
+        else:
+            print("Skipping audio processing - in preparation mode")
