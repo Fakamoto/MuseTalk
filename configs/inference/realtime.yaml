@@ -1,10 +1,12 @@
-avator_1:
- preparation: True # your can set it to False if you want to use the existing avator, it will save time
+mi_avatar:
+ preparation: True # Cambia a False después de la primera ejecución
  bbox_shift: 5
- video_path: "data/video/yongen.mp4"
+ video_path: "data/video/tu_video_10_min.mp4"
  audio_clips:
-     audio_0: "data/audio/yongen.wav"
-     audio_1: "data/audio/eng.wav"
- 
-  
+     audio_1min: "data/audio/audio_1_minuto.wav"
+     audio_1_5min: "data/audio/audio_1_minuto_30.wav"
+     audio_5min: "data/audio/audio_5_minutos.wav"
+     audio_30seg: "data/audio/audio_30_segundos.wav"
+
+
 
