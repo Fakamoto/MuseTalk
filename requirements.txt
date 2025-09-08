@@ -18,3 +18,7 @@ imageio[ffmpeg]
 omegaconf
 ffmpeg-python
 moviepy
+
+# API dependencies
+fastapi[standard]==0.104.1
+python-multipart==0.0.6
