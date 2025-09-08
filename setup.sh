@@ -23,6 +23,4 @@ uv run mim install "mmpose==1.1.0"
 
 sh ./download_weights.sh || true
 
-# sh inference.sh v1.5 realtime
-
 uv run fastapi dev realtime_api.py --port 8000 --host 0.0.0.0
