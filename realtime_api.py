@@ -539,6 +539,131 @@ async def generate_fast(
 
         raise HTTPException(status_code=500, detail=f"Fast generation failed: {str(e)}")
 
+@app.post("/generate-multi-fast")
+async def generate_multi_fast(
+    avatar_id: str = Form(...),
+    audio_files: list[UploadFile] = File(...)
+):
+    """
+    Endpoint 4: Generate multiple videos using cached avatar (SEQUENTIAL PROCESSING)
+    - Requires avatar to be prepared first
+    - Processes multiple audio files sequentially
+    - Returns a ZIP file containing all generated videos
+
+    Advantages:
+    - Allows batch processing of multiple audios
+    - Reuses prepared avatar for each audio
+    - Returns all results in a single ZIP
+
+    Limitations:
+    - Sequential processing (not parallel)
+    - Total time = sum of individual processing times
+    """
+    start_time = time.time()
+
+    try:
+        print(f"🎵 [MULTI-FAST-GENERATE] Starting batch generation for avatar: {avatar_id} with {len(audio_files)} audio files")
+
+        # Check if avatar is prepared
+        if avatar_id not in avatar_cache:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Avatar '{avatar_id}' not found in cache. Use /prepare endpoint first."
+            )
+
+        if not avatar_cache[avatar_id]["prepared"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Avatar '{avatar_id}' is not prepared. Use /prepare endpoint first."
+            )
+
+        # Validate all audio files
+        for i, audio in enumerate(audio_files):
+            if not audio.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Audio file {i+1} ({audio.filename}) must be MP3, WAV, or M4A"
+                )
+
+        # Get cached avatar data
+        avatar_data = avatar_cache[avatar_id]
+        video_path = avatar_data["video_path"]
+
+        # Save all audio files and create clips dict
+        audio_clips = {}
+        saved_audio_paths = []
+
+        for i, audio in enumerate(audio_files):
+            audio_name = f"multi_audio_{i+1}"
+            audio_path = save_uploaded_file(audio, f"{avatar_id}_{audio_name}{audio.filename}")
+            audio_clips[audio_name] = audio_path
+            saved_audio_paths.append(audio_path)
+
+        print(f"💾 Saved {len(audio_files)} audio files for batch processing")
+
+        # Create config file with preparation=False (use cache)
+        config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
+
+        # Run inference (this will process all audios sequentially)
+        stdout, stderr = run_inference(config_path)
+
+        # Find all generated videos
+        results_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
+        generated_videos = []
+
+        if results_dir.exists():
+            video_files = list(results_dir.glob("*.mp4"))
+            print(f"🎥 Found {len(video_files)} generated video files")
+
+            # Collect all generated videos (they should be named after audio_clips keys)
+            for video_file in video_files:
+                video_name = video_file.stem
+                if any(audio_name in video_name for audio_name in audio_clips.keys()):
+                    generated_videos.append(video_file)
+                    print(f"✅ Collected video: {video_name}.mp4")
+
+        if not generated_videos:
+            raise HTTPException(status_code=500, detail="No videos were generated")
+
+        # Create ZIP file with all videos
+        import zipfile
+        zip_filename = f"{avatar_id}_batch_{len(generated_videos)}_videos.zip"
+        zip_path = TEMP_DIR / zip_filename
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for video_path in generated_videos:
+                # Add video to ZIP with a clean name
+                video_name = video_path.stem
+                zip_file.write(video_path, f"{video_name}.mp4")
+                print(f"📦 Added {video_name}.mp4 to ZIP")
+
+        # Calculate total duration
+        end_time = time.time()
+        duration = end_time - start_time
+
+        # Print duration to terminal
+        print(f"Duration: {duration:.2f}s")
+        print(f"📊 Processed {len(generated_videos)} videos in batch")
+
+        # Clean up temp files
+        config_path.unlink(missing_ok=True)
+
+        return FileResponse(
+            path=zip_path,
+            media_type='application/zip',
+            filename=zip_filename
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Print error duration
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"Duration: {duration:.2f}s")
+
+        raise HTTPException(status_code=500, detail=f"Multi-fast generation failed: {str(e)}")
+
 @app.get("/cache")
 async def get_cache_status():
     """Get current cache status"""
@@ -571,6 +696,7 @@ async def root():
             "POST /generate": "Generate video from scratch (video + audio)",
             "POST /prepare": "Prepare avatar for caching (video only)",
             "POST /generate-fast": "Generate video using cached avatar (audio only)",
+            "POST /generate-multi-fast": "Generate multiple videos using cached avatar (multiple audio files -> ZIP)",
             "GET /cache": "Get cache status",
             "DELETE /cache/{avatar_id}": "Clear specific avatar from cache"
         },
@@ -583,7 +709,9 @@ async def root():
             "Duration-based filenames",
             "Enhanced error reporting",
             "Environment verification",
-            "File validation and size checking"
+            "File validation and size checking",
+            "Multi-audio batch processing",
+            "ZIP file output for multiple results"
         ]
     }
 
