@@ -15,6 +15,9 @@ CACHE SYSTEM:
   • latents.pt
   • mask/ (folder)
   • mask_coords.pkl
+- MP4 files in vid_output/ are generated during inference (not part of prepared cache)
+- vid_output/ directory is automatically created before inference if missing
+- Output files are searched by specific filename patterns (not by modification time)
 """
 
 import os
@@ -65,6 +68,9 @@ def get_cache_info(cache_id: str):
     - mask_coords.pkl
     - full_imgs/ (carpeta)
     - mask/ (carpeta)
+
+    NOTA: Los archivos MP4 en vid_output se generan durante la inferencia,
+    no son parte del cache preparado.
     """
     cache_dir = Path("./results") / VERSION / "avatars" / cache_id
     if not cache_dir.exists():
@@ -616,33 +622,75 @@ async def generate_fast(
             "fast_generated": audio_path
         }
 
+        # Ensure vid_output directory exists before running inference
+        vid_output_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
+        vid_output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Ensured vid_output directory exists: {vid_output_dir}")
+
         # Create config file with preparation=False (use cache)
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
         # Run inference (this will use the cached avatar)
         stdout, stderr = run_inference(config_path)
 
-        # Find generated video
-        results_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
-        if results_dir.exists():
-            video_files = list(results_dir.glob("*.mp4"))
-            if video_files:
-                output_video = video_files[0]
+        # Find generated video - search by specific filename pattern
+        possible_dirs = [
+            Path("./results") / VERSION / "avatars" / avatar_id / "vid_output",
+            Path("./results") / VERSION / "avatars" / avatar_id,
+            Path("./results") / VERSION / "avatars"
+        ]
 
-                # Calculate total duration
-                end_time = time.time()
-                duration = end_time - start_time
+        output_video = None
+        expected_patterns = ["fast_generated", avatar_id, audio.filename.split('.')[0]]
 
-                # Print duration to terminal
-                print(f"Duration: {duration:.2f}s")
-                # Clean up temp files
-                config_path.unlink(missing_ok=True)
+        for search_dir in possible_dirs:
+            if search_dir.exists():
+                print(f"🔍 Searching for video in: {search_dir}")
+                all_mp4_files = list(search_dir.glob("*.mp4"))
+                print(f"📁 Found {len(all_mp4_files)} MP4 files in {search_dir}")
 
-                return FileResponse(
-                    path=output_video,
-                    media_type='video/mp4',
-                    filename=f"{duration:.2f}s_fast.mp4"
-                )
+                # Look for MP4 files with expected naming patterns
+                for mp4_file in all_mp4_files:
+                    file_name = mp4_file.stem  # filename without extension
+                    print(f"   Checking: {file_name}.mp4")
+
+                    # Check if filename contains any of the expected patterns
+                    for pattern in expected_patterns:
+                        if pattern in file_name:
+                            output_video = mp4_file
+                            print(f"✅ Found matching video: {mp4_file}")
+                            break
+
+                    if output_video:
+                        break
+
+                if output_video:
+                    break
+
+        if output_video and output_video.exists():
+            # Calculate total duration
+            end_time = time.time()
+            duration = end_time - start_time
+
+            # Print duration to terminal
+            print(f"Duration: {duration:.2f}s")
+            # Clean up temp files
+            config_path.unlink(missing_ok=True)
+
+            return FileResponse(
+                path=output_video,
+                media_type='video/mp4',
+                filename=f"{duration:.2f}s_fast.mp4"
+            )
+
+        # If we get here, something went wrong
+        print("❌ Output video not found in any of the expected locations")
+        for search_dir in possible_dirs:
+            if search_dir.exists():
+                mp4_files = list(search_dir.glob("*.mp4"))
+                print(f"📁 {search_dir}: {len(mp4_files)} MP4 files found")
+                for mp4_file in mp4_files:
+                    print(f"   - {mp4_file.name}")
 
         raise HTTPException(status_code=500, detail="Fast generation completed but output file not found")
 
@@ -728,28 +776,56 @@ async def generate_multi_fast(
 
         print(f"💾 Saved {len(audio_files)} audio files for batch processing")
 
+        # Ensure vid_output directory exists before running inference
+        vid_output_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
+        vid_output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Ensured vid_output directory exists: {vid_output_dir}")
+
         # Create config file with preparation=False (use cache)
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
         # Run inference (this will process all audios sequentially)
         stdout, stderr = run_inference(config_path)
 
-        # Find all generated videos
-        results_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
+        # Find all generated videos - search by specific filename patterns
+        possible_dirs = [
+            Path("./results") / VERSION / "avatars" / avatar_id / "vid_output",
+            Path("./results") / VERSION / "avatars" / avatar_id,
+            Path("./results") / VERSION / "avatars"
+        ]
+
         generated_videos = []
+        expected_patterns = list(audio_clips.keys()) + [avatar_id]
 
-        if results_dir.exists():
-            video_files = list(results_dir.glob("*.mp4"))
-            print(f"🎥 Found {len(video_files)} generated video files")
+        for search_dir in possible_dirs:
+            if search_dir.exists():
+                print(f"🔍 Searching for videos in: {search_dir}")
+                all_mp4_files = list(search_dir.glob("*.mp4"))
+                print(f"📁 Found {len(all_mp4_files)} MP4 files in {search_dir}")
 
-            # Collect all generated videos (they should be named after audio_clips keys)
-            for video_file in video_files:
-                video_name = video_file.stem
-                if any(audio_name in video_name for audio_name in audio_clips.keys()):
-                    generated_videos.append(video_file)
-                    print(f"✅ Collected video: {video_name}.mp4")
+                # Check each MP4 file against expected patterns
+                for mp4_file in all_mp4_files:
+                    file_name = mp4_file.stem
+                    print(f"   Checking: {file_name}.mp4")
+
+                    # Check if filename contains any of the expected patterns
+                    for pattern in expected_patterns:
+                        if pattern in file_name:
+                            if mp4_file not in generated_videos:  # Avoid duplicates
+                                generated_videos.append(mp4_file)
+                                print(f"✅ Collected video: {file_name}.mp4")
+                            break
 
         if not generated_videos:
+            print("❌ No videos were generated with expected names")
+            # Debug: show all MP4 files found
+            for search_dir in possible_dirs:
+                if search_dir.exists():
+                    all_mp4_files = list(search_dir.glob("*.mp4"))
+                    print(f"📁 {search_dir}: {len(all_mp4_files)} total MP4 files")
+                    for mp4_file in all_mp4_files:
+                        print(f"   - {mp4_file.name}")
+
             raise HTTPException(status_code=500, detail="No videos were generated")
 
         # Create ZIP file with all videos
@@ -849,7 +925,9 @@ async def root():
         "cache_format": "Any folder name (e.g., avatar1, mycache, test_cache, etc.)",
         "cache_requirements": {
             "required_files": ["avator_info.json", "coords.pkl", "latents.pt", "mask_coords.pkl"],
-            "required_dirs": ["full_imgs", "mask"]
+            "required_dirs": ["full_imgs", "mask"],
+            "output_handling": "vid_output directory is automatically created before inference",
+            "file_search": "System searches for generated MP4 files by name pattern (not by modification time)"
         },
         "note": "Cache system now uses folders instead of memory dict. Cache names can be any string",
         "features": [
@@ -862,16 +940,15 @@ async def root():
             "Environment verification",
             "File validation and size checking",
             "Multi-audio batch processing",
-            "ZIP file output for multiple results"
+            "ZIP file output for multiple results",
+            "Automatic vid_output directory creation",
+            "Intelligent output file search by filename patterns",
+            "Support for copied cache directories"
         ]
     }
 
 # ====================================================================
 # EJECUCIÓN DEL SERVIDOR:
 #
-# Opción 1 - Con uv (recomendado):
 # uv run fastapi run realtime_api.py --port 8000 --host 0.0.0.0
-#
-# Opción 2 - Con script:
-# ./run_enhanced_api.sh
 # ====================================================================
