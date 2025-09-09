@@ -11,6 +11,7 @@ apt-get update && apt-get install -y git ffmpeg build-essential ninja-build
 # cd /workspace
 # git clone https://github.com/Fakamoto/MuseTalk
 # cd MuseTalk
+# /bin/bash ./setup.sh
 
 
 echo "🐍 Setting up Python environment with uv and venv..."
