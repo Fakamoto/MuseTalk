@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-MuseTalk Realtime API Server
-FastAPI server with three endpoints for avatar generation
+MuseTalk Realtime API Server - Folder-based Cache System
+FastAPI server with endpoints for avatar generation using persistent folder-based caching
+
+CACHE SYSTEM:
+- Caches are stored as folders in ./results/v15/avatars/ with any name
+- No longer uses in-memory dictionary, all cache data persists between server restarts
+- Cache names can be any string (e.g., avatar1, mycache, test_cache, etc.)
+- Cache folders are automatically detected on server startup
 """
 
 import os
@@ -28,8 +34,47 @@ BATCH_SIZE = 20
 TEMP_DIR = Path("./temp_api_files")
 TEMP_DIR.mkdir(exist_ok=True)
 
-# Caché global de avatares preparados
-avatar_cache = {}
+def get_available_caches():
+    """Obtener lista de caches disponibles desde carpeta ./results/v15/avatars/"""
+    cache_dir = Path("./results") / VERSION / "avatars"
+    if not cache_dir.exists():
+        return []
+
+    # Obtener todas las carpetas (cualquier nombre es válido como cache)
+    cache_folders = []
+    for folder in cache_dir.iterdir():
+        if folder.is_dir():
+            cache_folders.append(folder.name)
+
+    return sorted(cache_folders)
+
+def get_cache_info(cache_id: str):
+    """Obtener información de un cache específico"""
+    cache_dir = Path("./results") / VERSION / "avatars" / cache_id
+    if not cache_dir.exists():
+        return None
+
+    # Buscar archivos de video preparados
+    vid_output_dir = cache_dir / "vid_output"
+    if vid_output_dir.exists():
+        video_files = list(vid_output_dir.glob("*.mp4"))
+        if video_files:
+            # Tomar el primer video como referencia
+            video_file = video_files[0]
+            return {
+                "cache_id": cache_id,
+                "video_path": str(video_file),
+                "prepared": True,
+                "bbox_shift": BBOX_SHIFT,
+                "version": VERSION,
+                "exists": True
+            }
+
+    return {
+        "cache_id": cache_id,
+        "prepared": False,
+        "exists": True
+    }
 
 # ====================================================================
 # INICIALIZACIÓN Y VERIFICACIONES
@@ -397,7 +442,8 @@ async def prepare_avatar(
     """
     Endpoint 2: Prepare avatar for caching
     - Receives only video file
-    - Prepares avatar and saves to cache
+    - Prepares avatar and saves to cache folder
+    - Cache folder name is specified by avatar_id parameter
     - No audio processing needed
     """
     start_time = time.time()
@@ -408,6 +454,17 @@ async def prepare_avatar(
         # Validate file type
         if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
             raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
+
+        # Verificar si el cache ya existe
+        available_caches = get_available_caches()
+        if avatar_id in available_caches:
+            cache_info = get_cache_info(avatar_id)
+            if cache_info and cache_info.get("prepared"):
+                return {
+                    "message": f"Cache '{avatar_id}' already exists and is prepared",
+                    "cache_id": avatar_id,
+                    "status": "already_prepared"
+                }
 
         # Save uploaded file
         video_path = save_uploaded_file(video, f"{avatar_id}_prepare{video.filename}")
@@ -427,25 +484,24 @@ async def prepare_avatar(
 
         # Print duration to terminal
         print(f"Duration: {duration:.2f}s")
-        # Mark avatar as prepared in cache
-        avatar_cache[avatar_id] = {
-            "video_path": video_path,
-            "prepared": True,
-            "bbox_shift": BBOX_SHIFT,
-            "version": VERSION,
-            "preparation_time": duration
-        }
 
-        # Clean up temp config
-        config_path.unlink(missing_ok=True)
+        # Verificar que el cache se haya creado correctamente
+        cache_info = get_cache_info(avatar_id)
+        if cache_info and cache_info.get("prepared"):
+            # Clean up temp config
+            config_path.unlink(missing_ok=True)
 
-        return {
-            "message": f"Avatar '{avatar_id}' prepared and cached successfully",
-            "avatar_id": avatar_id,
-            "status": "prepared",
-            "preparation_duration_seconds": duration
-        }
+            return {
+                "message": f"Cache '{avatar_id}' prepared successfully",
+                "cache_id": avatar_id,
+                "status": "prepared",
+                "preparation_duration_seconds": duration
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Cache preparation completed but cache folder not found")
 
+    except HTTPException:
+        raise
     except Exception as e:
         # Print error duration
         end_time = time.time()
@@ -460,7 +516,7 @@ async def generate_fast(
 ):
     """
     Endpoint 3: Generate video using cached avatar
-    - Requires avatar to be prepared first
+    - Requires avatar to be prepared first (cache folder must exist)
     - Uses cached avatar for faster generation
     - Only processes audio
     - Returns video with duration as filename
@@ -468,19 +524,21 @@ async def generate_fast(
     start_time = time.time()
 
     try:
-        print(f"⚡ [FAST-GENERATE] Starting fast generation for avatar: {avatar_id}")
+        print(f"⚡ [FAST-GENERATE] Starting fast generation for cache: {avatar_id}")
 
-        # Check if avatar is prepared
-        if avatar_id not in avatar_cache:
+        # Check if cache exists and is prepared
+        available_caches = get_available_caches()
+        if avatar_id not in available_caches:
             raise HTTPException(
                 status_code=400,
-                detail=f"Avatar '{avatar_id}' not found in cache. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' not found. Use /prepare endpoint first to create it."
             )
 
-        if not avatar_cache[avatar_id]["prepared"]:
+        cache_info = get_cache_info(avatar_id)
+        if not cache_info or not cache_info.get("prepared"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Avatar '{avatar_id}' is not prepared. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' exists but is not properly prepared. Use /prepare endpoint first."
             )
 
         # Validate audio file
@@ -488,8 +546,7 @@ async def generate_fast(
             raise HTTPException(status_code=400, detail="Audio must be MP3, WAV, or M4A")
 
         # Get cached avatar data
-        avatar_data = avatar_cache[avatar_id]
-        video_path = avatar_data["video_path"]
+        video_path = cache_info["video_path"]
 
         # Save uploaded audio
         audio_path = save_uploaded_file(audio, f"{avatar_id}_fast{audio.filename}")
@@ -546,7 +603,7 @@ async def generate_multi_fast(
 ):
     """
     Endpoint 4: Generate multiple videos using cached avatar (SEQUENTIAL PROCESSING)
-    - Requires avatar to be prepared first
+    - Requires avatar to be prepared first (cache folder must exist)
     - Processes multiple audio files sequentially
     - Returns a ZIP file containing all generated videos
 
@@ -562,19 +619,21 @@ async def generate_multi_fast(
     start_time = time.time()
 
     try:
-        print(f"🎵 [MULTI-FAST-GENERATE] Starting batch generation for avatar: {avatar_id} with {len(audio_files)} audio files")
+        print(f"🎵 [MULTI-FAST-GENERATE] Starting batch generation for cache: {avatar_id} with {len(audio_files)} audio files")
 
-        # Check if avatar is prepared
-        if avatar_id not in avatar_cache:
+        # Check if cache exists and is prepared
+        available_caches = get_available_caches()
+        if avatar_id not in available_caches:
             raise HTTPException(
                 status_code=400,
-                detail=f"Avatar '{avatar_id}' not found in cache. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' not found. Use /prepare endpoint first to create it."
             )
 
-        if not avatar_cache[avatar_id]["prepared"]:
+        cache_info = get_cache_info(avatar_id)
+        if not cache_info or not cache_info.get("prepared"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Avatar '{avatar_id}' is not prepared. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' exists but is not properly prepared. Use /prepare endpoint first."
             )
 
         # Validate all audio files
@@ -586,8 +645,7 @@ async def generate_multi_fast(
                 )
 
         # Get cached avatar data
-        avatar_data = avatar_cache[avatar_id]
-        video_path = avatar_data["video_path"]
+        video_path = cache_info["video_path"]
 
         # Save all audio files and create clips dict
         audio_clips = {}
@@ -666,44 +724,64 @@ async def generate_multi_fast(
 
 @app.get("/cache")
 async def get_cache_status():
-    """Get current cache status"""
+    """Get current cache status from folders"""
+    available_caches = get_available_caches()
+    cache_info = {}
+
+    for cache_id in available_caches:
+        cache_info[cache_id] = get_cache_info(cache_id)
+
     return {
-        "cached_avatars": list(avatar_cache.keys()),
-        "cache_info": avatar_cache
+        "available_caches": available_caches,
+        "cache_info": cache_info,
+        "total_caches": len(available_caches)
     }
 
 @app.delete("/cache/{avatar_id}")
 async def clear_cache(avatar_id: str):
-    """Clear specific avatar from cache"""
-    if avatar_id in avatar_cache:
-        # Clean up temp files
-        avatar_data = avatar_cache[avatar_id]
-        video_path = avatar_data.get("video_path")
-        if video_path and os.path.exists(video_path):
-            os.remove(video_path)
+    """Clear specific cache folder"""
+    available_caches = get_available_caches()
+    if avatar_id not in available_caches:
+        raise HTTPException(status_code=404, detail=f"Cache '{avatar_id}' not found")
 
-        del avatar_cache[avatar_id]
-        return {"message": f"Avatar '{avatar_id}' removed from cache"}
-    else:
-        raise HTTPException(status_code=404, detail=f"Avatar '{avatar_id}' not found in cache")
+    try:
+        # Eliminar la carpeta completa del cache
+        cache_dir = Path("./results") / VERSION / "avatars" / avatar_id
+        if cache_dir.exists():
+            import shutil
+            shutil.rmtree(cache_dir)
+            print(f"🗑️ Cache folder '{avatar_id}' deleted successfully")
+            return {"message": f"Cache '{avatar_id}' removed successfully"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Cache folder '{avatar_id}' not found on disk")
+
+    except Exception as e:
+        print(f"❌ Error deleting cache folder: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete cache '{avatar_id}': {str(e)}")
 
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
+    available_caches = get_available_caches()
+
     return {
-        "message": "MuseTalk Realtime API Server with Enhanced Logging",
+        "message": "MuseTalk Realtime API Server - Folder-based Cache System",
         "endpoints": {
             "POST /generate": "Generate video from scratch (video + audio)",
-            "POST /prepare": "Prepare avatar for caching (video only)",
+            "POST /prepare": "Prepare avatar for caching (video only) - creates cache folder with any name",
             "POST /generate-fast": "Generate video using cached avatar (audio only)",
             "POST /generate-multi-fast": "Generate multiple videos using cached avatar (multiple audio files -> ZIP)",
-            "GET /cache": "Get cache status",
-            "DELETE /cache/{avatar_id}": "Clear specific avatar from cache"
+            "GET /cache": "Get cache status from folders",
+            "DELETE /cache/{avatar_id}": "Clear specific cache folder"
         },
         "version": VERSION,
-        "cached_avatars": list(avatar_cache.keys()),
-        "note": "All endpoints now print detailed duration and use duration as filename",
+        "available_caches": available_caches,
+        "cache_directory": f"./results/{VERSION}/avatars/",
+        "cache_format": "Any folder name (e.g., avatar1, mycache, test_cache, etc.)",
+        "note": "Cache system now uses folders instead of memory dict. Cache names can be any string",
         "features": [
+            "Folder-based cache system",
+            "Persistent cache storage",
             "Detailed step-by-step logging",
             "Duration tracking in terminal",
             "Duration-based filenames",
