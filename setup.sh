@@ -1,6 +1,6 @@
 set -euo pipefail
 touch ~/.no_auto_tmux
-
+export UV_HTTP_TIMEOUT=600 UV_HTTP_MAX_RETRIES=8
 
 echo "🔧 Updating package lists and installing system dependencies..."
 apt-get update && apt-get install -y git ffmpeg build-essential ninja-build
