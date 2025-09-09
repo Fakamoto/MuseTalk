@@ -9,7 +9,7 @@ CACHE SYSTEM:
 - Cache names can be any string (e.g., avatar1, mycache, test_cache, etc.)
 - Cache folders are automatically detected on server startup
 - A cache is considered "prepared" when it contains these required files:
-  • avatar_info.json
+  • avator_info.json
   • coords.pkl
   • full_imgs/ (folder)
   • latents.pt
@@ -59,7 +59,7 @@ def get_cache_info(cache_id: str):
     """Obtener información de un cache específico.
 
     Un cache se considera preparado cuando contiene todos los archivos requeridos:
-    - avatar_info.json
+    - avator_info.json
     - coords.pkl
     - latents.pt
     - mask_coords.pkl
@@ -72,7 +72,7 @@ def get_cache_info(cache_id: str):
 
     # Verificar archivos requeridos para un cache preparado
     required_files = [
-        "avatar_info.json",
+        "avator_info.json",
         "coords.pkl",
         "latents.pt",
         "mask_coords.pkl"
@@ -568,7 +568,7 @@ async def generate_fast(
     """
     Endpoint 3: Generate video using cached avatar
     - Requires avatar to be prepared first (cache folder with required files must exist)
-    - Cache must contain: avatar_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
+    - Cache must contain: avator_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
     - Uses cached avatar for faster generation
     - Only processes audio
     - Returns video with duration as filename
@@ -664,7 +664,7 @@ async def generate_multi_fast(
     """
     Endpoint 4: Generate multiple videos using cached avatar (SEQUENTIAL PROCESSING)
     - Requires avatar to be prepared first (cache folder with required files must exist)
-    - Cache must contain: avatar_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
+    - Cache must contain: avator_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
     - Processes multiple audio files sequentially
     - Returns a ZIP file containing all generated videos
 
@@ -848,7 +848,7 @@ async def root():
         "cache_directory": f"./results/{VERSION}/avatars/",
         "cache_format": "Any folder name (e.g., avatar1, mycache, test_cache, etc.)",
         "cache_requirements": {
-            "required_files": ["avatar_info.json", "coords.pkl", "latents.pt", "mask_coords.pkl"],
+            "required_files": ["avator_info.json", "coords.pkl", "latents.pt", "mask_coords.pkl"],
             "required_dirs": ["full_imgs", "mask"]
         },
         "note": "Cache system now uses folders instead of memory dict. Cache names can be any string",
