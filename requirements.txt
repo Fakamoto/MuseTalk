@@ -20,4 +20,4 @@ moviepy
 
 # API dependencies
 fastapi[standard]==0.116.1
-python-multipart==0.0.6
+python-multipart
