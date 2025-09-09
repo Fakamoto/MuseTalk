@@ -23,6 +23,8 @@ CACHE SYSTEM:
 import os
 import subprocess
 import time
+import tempfile
+import requests
 
 import shutil
 from pathlib import Path
@@ -356,6 +358,47 @@ def save_uploaded_file(upload_file: UploadFile, filename: str) -> str:
 
     except Exception as e:
         print(f"❌ Error saving file: {type(e).__name__}: {str(e)}")
+        raise
+
+def download_audio_from_url(audio_url: str, temp_dir: str) -> str:
+    """Download audio from URL and return local path"""
+    print(f"🔗 Downloading audio from: {audio_url}")
+
+    try:
+        # Download the file
+        response = requests.get(audio_url, stream=True, timeout=30)
+        response.raise_for_status()
+
+        # Get filename from URL or create a default one
+        filename = audio_url.split('/')[-1]
+        if not filename or '.' not in filename:
+            filename = "downloaded_audio.wav"
+
+        file_path = os.path.join(temp_dir, filename)
+
+        # Save the file
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        # Verify download was successful
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            print(f"✅ Audio downloaded successfully: {file_size} bytes")
+
+            if file_size == 0:
+                raise HTTPException(status_code=400, detail="Downloaded audio file is empty")
+
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save downloaded audio file")
+
+        return file_path
+
+    except requests.RequestException as e:
+        print(f"❌ Download failed: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to download audio from URL: {str(e)}")
+    except Exception as e:
+        print(f"❌ Error downloading audio: {type(e).__name__}: {str(e)}")
         raise
 
 # ====================================================================
@@ -704,6 +747,120 @@ async def generate_fast(
 
         raise HTTPException(status_code=500, detail=f"Fast generation failed: {str(e)}")
 
+@app.post("/generate-fast-url")
+async def generate_fast_url(
+    audio_url: str = Form(...),
+    avatar_id: str = Form(...)
+):
+    """
+    Endpoint: Generate video using cached avatar from audio URL (SIMPLIFIED VERSION)
+    - Downloads audio from URL automatically
+    - Requires avatar to be prepared first (cache folder with required files must exist)
+    - Uses cached avatar for faster generation
+    - Returns video with duration as filename
+    - Uses temporary directory for file handling
+    """
+    start_time = time.time()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            print(f"⚡ [FAST-URL-GENERATE] Starting fast generation for cache: {avatar_id}")
+
+            # Check if cache exists and is prepared
+            available_caches = get_available_caches()
+            if avatar_id not in available_caches:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cache '{avatar_id}' not found. Use /prepare endpoint first to create it."
+                )
+
+            cache_info = get_cache_info(avatar_id)
+            if not cache_info or not cache_info.get("prepared"):
+                missing_info = ""
+                if cache_info:
+                    missing_files = cache_info.get("missing_files", [])
+                    missing_dirs = cache_info.get("missing_dirs", [])
+                    if missing_files or missing_dirs:
+                        missing_info = f" Missing files: {missing_files}, Missing dirs: {missing_dirs}"
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cache '{avatar_id}' exists but is not properly prepared.{missing_info} Use /prepare endpoint first."
+                )
+
+            # Download audio from URL
+            audio_path = download_audio_from_url(audio_url, temp_dir)
+
+            # Use cache directory as video reference
+            cache_dir = Path("./results") / VERSION / "avatars" / avatar_id
+            video_path = str(cache_dir)
+
+            # Create audio clips dict
+            audio_clips = {
+                "fast_url_generated": audio_path
+            }
+
+            # Ensure vid_output directory exists
+            vid_output_dir = cache_dir / "vid_output"
+            vid_output_dir.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Ensured vid_output directory exists: {vid_output_dir}")
+
+            # Create config file with preparation=False
+            config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
+
+            # Run inference
+            stdout, stderr = run_inference(config_path)
+
+            # Find generated video
+            output_video = None
+            search_patterns = ["fast_url_generated", avatar_id]
+
+            # Search in vid_output directory first
+            if vid_output_dir.exists():
+                for mp4_file in vid_output_dir.glob("*.mp4"):
+                    file_name = mp4_file.stem
+                    if any(pattern in file_name for pattern in search_patterns):
+                        output_video = mp4_file
+                        print(f"✅ Found output video: {mp4_file}")
+                        break
+
+            if output_video and output_video.exists():
+                # Calculate duration
+                end_time = time.time()
+                duration = end_time - start_time
+
+                print(f"Duration: {duration:.2f}s")
+
+                # Clean up config
+                config_path.unlink(missing_ok=True)
+
+                return FileResponse(
+                    path=output_video,
+                    media_type='video/mp4',
+                    filename=f"{duration:.2f}s_fast_url.mp4"
+                )
+
+            # If no video found
+            print("❌ Output video not found")
+            if vid_output_dir.exists():
+                mp4_files = list(vid_output_dir.glob("*.mp4"))
+                print(f"📁 Found {len(mp4_files)} MP4 files in output directory")
+                for mp4_file in mp4_files:
+                    print(f"   - {mp4_file.name}")
+
+            raise HTTPException(status_code=500, detail="Generation completed but output file not found")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"Duration: {duration:.2f}s")
+            print(f"💥 Error: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Fast URL generation failed: {str(e)}")
+
 @app.post("/generate-multi-fast")
 async def generate_multi_fast(
     avatar_id: str = Form(...),
@@ -915,6 +1072,7 @@ async def root():
             "POST /generate": "Generate video from scratch (video + audio)",
             "POST /prepare": "Prepare avatar for caching (video only) - creates cache folder with any name",
             "POST /generate-fast": "Generate video using cached avatar (audio only)",
+            "POST /generate-fast-url": "Generate video using cached avatar from audio URL (SIMPLIFIED - auto download)",
             "POST /generate-multi-fast": "Generate multiple videos using cached avatar (multiple audio files -> ZIP)",
             "GET /cache": "Get cache status from folders",
             "DELETE /cache/{avatar_id}": "Clear specific cache folder"
@@ -943,7 +1101,10 @@ async def root():
             "ZIP file output for multiple results",
             "Automatic vid_output directory creation",
             "Intelligent output file search by filename patterns",
-            "Support for copied cache directories"
+            "Support for copied cache directories",
+            "Audio URL download support (generate-fast-url endpoint)",
+            "Simplified endpoint with automatic temp directory management",
+            "URL-based audio processing with minimal validation"
         ]
     }
 
