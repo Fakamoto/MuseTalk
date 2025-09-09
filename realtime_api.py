@@ -8,6 +8,13 @@ CACHE SYSTEM:
 - No longer uses in-memory dictionary, all cache data persists between server restarts
 - Cache names can be any string (e.g., avatar1, mycache, test_cache, etc.)
 - Cache folders are automatically detected on server startup
+- A cache is considered "prepared" when it contains these required files:
+  • avatar_info.json
+  • coords.pkl
+  • full_imgs/ (folder)
+  • latents.pt
+  • mask/ (folder)
+  • mask_coords.pkl
 """
 
 import os
@@ -49,31 +56,60 @@ def get_available_caches():
     return sorted(cache_folders)
 
 def get_cache_info(cache_id: str):
-    """Obtener información de un cache específico"""
+    """Obtener información de un cache específico.
+
+    Un cache se considera preparado cuando contiene todos los archivos requeridos:
+    - avatar_info.json
+    - coords.pkl
+    - latents.pt
+    - mask_coords.pkl
+    - full_imgs/ (carpeta)
+    - mask/ (carpeta)
+    """
     cache_dir = Path("./results") / VERSION / "avatars" / cache_id
     if not cache_dir.exists():
         return None
 
-    # Buscar archivos de video preparados
-    vid_output_dir = cache_dir / "vid_output"
-    if vid_output_dir.exists():
-        video_files = list(vid_output_dir.glob("*.mp4"))
-        if video_files:
-            # Tomar el primer video como referencia
-            video_file = video_files[0]
-            return {
-                "cache_id": cache_id,
-                "video_path": str(video_file),
-                "prepared": True,
-                "bbox_shift": BBOX_SHIFT,
-                "version": VERSION,
-                "exists": True
-            }
+    # Verificar archivos requeridos para un cache preparado
+    required_files = [
+        "avatar_info.json",
+        "coords.pkl",
+        "latents.pt",
+        "mask_coords.pkl"
+    ]
+
+    required_dirs = [
+        "full_imgs",
+        "mask"
+    ]
+
+    missing_files = []
+    missing_dirs = []
+
+    # Verificar archivos requeridos
+    for file_name in required_files:
+        file_path = cache_dir / file_name
+        if not file_path.exists():
+            missing_files.append(file_name)
+
+    # Verificar carpetas requeridas
+    for dir_name in required_dirs:
+        dir_path = cache_dir / dir_name
+        if not dir_path.exists() or not dir_path.is_dir():
+            missing_dirs.append(dir_name)
+
+    # El cache está preparado si todos los archivos y carpetas requeridas existen
+    is_prepared = len(missing_files) == 0 and len(missing_dirs) == 0
 
     return {
         "cache_id": cache_id,
-        "prepared": False,
-        "exists": True
+        "prepared": is_prepared,
+        "exists": True,
+        "required_files": required_files,
+        "required_dirs": required_dirs,
+        "missing_files": missing_files,
+        "missing_dirs": missing_dirs,
+        "cache_dir": str(cache_dir)
     }
 
 # ====================================================================
@@ -455,7 +491,7 @@ async def prepare_avatar(
         if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
             raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
 
-        # Verificar si el cache ya existe
+        # Verificar si el cache ya existe y está preparado
         available_caches = get_available_caches()
         if avatar_id in available_caches:
             cache_info = get_cache_info(avatar_id)
@@ -463,7 +499,9 @@ async def prepare_avatar(
                 return {
                     "message": f"Cache '{avatar_id}' already exists and is prepared",
                     "cache_id": avatar_id,
-                    "status": "already_prepared"
+                    "status": "already_prepared",
+                    "required_files_present": cache_info.get("required_files", []),
+                    "required_dirs_present": cache_info.get("required_dirs", [])
                 }
 
         # Save uploaded file
@@ -495,10 +533,23 @@ async def prepare_avatar(
                 "message": f"Cache '{avatar_id}' prepared successfully",
                 "cache_id": avatar_id,
                 "status": "prepared",
-                "preparation_duration_seconds": duration
+                "preparation_duration_seconds": duration,
+                "required_files_present": cache_info.get("required_files", []),
+                "required_dirs_present": cache_info.get("required_dirs", [])
             }
         else:
-            raise HTTPException(status_code=500, detail="Cache preparation completed but cache folder not found")
+            # Proporcionar información detallada sobre qué falta
+            missing_info = ""
+            if cache_info:
+                missing_files = cache_info.get("missing_files", [])
+                missing_dirs = cache_info.get("missing_dirs", [])
+                if missing_files or missing_dirs:
+                    missing_info = f" Missing files: {missing_files}, Missing dirs: {missing_dirs}"
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cache preparation completed but required files not found.{missing_info}"
+            )
 
     except HTTPException:
         raise
@@ -516,7 +567,8 @@ async def generate_fast(
 ):
     """
     Endpoint 3: Generate video using cached avatar
-    - Requires avatar to be prepared first (cache folder must exist)
+    - Requires avatar to be prepared first (cache folder with required files must exist)
+    - Cache must contain: avatar_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
     - Uses cached avatar for faster generation
     - Only processes audio
     - Returns video with duration as filename
@@ -536,17 +588,25 @@ async def generate_fast(
 
         cache_info = get_cache_info(avatar_id)
         if not cache_info or not cache_info.get("prepared"):
+            missing_info = ""
+            if cache_info:
+                missing_files = cache_info.get("missing_files", [])
+                missing_dirs = cache_info.get("missing_dirs", [])
+                if missing_files or missing_dirs:
+                    missing_info = f" Missing files: {missing_files}, Missing dirs: {missing_dirs}"
+
             raise HTTPException(
                 status_code=400,
-                detail=f"Cache '{avatar_id}' exists but is not properly prepared. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' exists but is not properly prepared.{missing_info} Use /prepare endpoint first."
             )
 
         # Validate audio file
         if not audio.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
             raise HTTPException(status_code=400, detail="Audio must be MP3, WAV, or M4A")
 
-        # Get cached avatar data
-        video_path = cache_info["video_path"]
+        # Usar el directorio del cache como referencia para el procesamiento
+        cache_dir = Path("./results") / VERSION / "avatars" / avatar_id
+        video_path = str(cache_dir)  # El script usará los archivos del cache directamente
 
         # Save uploaded audio
         audio_path = save_uploaded_file(audio, f"{avatar_id}_fast{audio.filename}")
@@ -603,7 +663,8 @@ async def generate_multi_fast(
 ):
     """
     Endpoint 4: Generate multiple videos using cached avatar (SEQUENTIAL PROCESSING)
-    - Requires avatar to be prepared first (cache folder must exist)
+    - Requires avatar to be prepared first (cache folder with required files must exist)
+    - Cache must contain: avatar_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
     - Processes multiple audio files sequentially
     - Returns a ZIP file containing all generated videos
 
@@ -631,9 +692,16 @@ async def generate_multi_fast(
 
         cache_info = get_cache_info(avatar_id)
         if not cache_info or not cache_info.get("prepared"):
+            missing_info = ""
+            if cache_info:
+                missing_files = cache_info.get("missing_files", [])
+                missing_dirs = cache_info.get("missing_dirs", [])
+                if missing_files or missing_dirs:
+                    missing_info = f" Missing files: {missing_files}, Missing dirs: {missing_dirs}"
+
             raise HTTPException(
                 status_code=400,
-                detail=f"Cache '{avatar_id}' exists but is not properly prepared. Use /prepare endpoint first."
+                detail=f"Cache '{avatar_id}' exists but is not properly prepared.{missing_info} Use /prepare endpoint first."
             )
 
         # Validate all audio files
@@ -644,8 +712,9 @@ async def generate_multi_fast(
                     detail=f"Audio file {i+1} ({audio.filename}) must be MP3, WAV, or M4A"
                 )
 
-        # Get cached avatar data
-        video_path = cache_info["video_path"]
+        # Usar el directorio del cache como referencia para el procesamiento
+        cache_dir = Path("./results") / VERSION / "avatars" / avatar_id
+        video_path = str(cache_dir)  # El script usará los archivos del cache directamente
 
         # Save all audio files and create clips dict
         audio_clips = {}
@@ -778,6 +847,10 @@ async def root():
         "available_caches": available_caches,
         "cache_directory": f"./results/{VERSION}/avatars/",
         "cache_format": "Any folder name (e.g., avatar1, mycache, test_cache, etc.)",
+        "cache_requirements": {
+            "required_files": ["avatar_info.json", "coords.pkl", "latents.pt", "mask_coords.pkl"],
+            "required_dirs": ["full_imgs", "mask"]
+        },
         "note": "Cache system now uses folders instead of memory dict. Cache names can be any string",
         "features": [
             "Folder-based cache system",
