@@ -263,7 +263,7 @@ def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, prepa
 
     return config_path
 
-def run_inference(config_path: str):
+def run_inference(config_path: str, output_vid_name: str = "generated"):
     """Run realtime inference with given config"""
     print("🔧 Building inference command...")
 
@@ -277,7 +277,8 @@ def run_inference(config_path: str):
         "--version", VERSION,
         "--bbox_shift", str(BBOX_SHIFT),
         "--fps", str(FPS),
-        "--batch_size", str(BATCH_SIZE)
+        "--batch_size", str(BATCH_SIZE),
+        "--output_vid_name", output_vid_name
     ]
 
     print(f"🚀 Command to execute: {' '.join(cmd_args)}")
@@ -449,7 +450,7 @@ async def generate_video(
 
         print("🤖 Step 4: Running inference...")
         # Run inference
-        stdout, stderr = run_inference(config_path)
+        stdout, stderr = run_inference(config_path, output_vid_name="generated")
         print("✅ Inference completed")
 
         print("🔍 Step 5: Looking for output video...")
@@ -563,7 +564,7 @@ async def prepare_avatar(
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=True)
 
         # Run inference (this will prepare the avatar)
-        stdout, stderr = run_inference(config_path)
+        stdout, stderr = run_inference(config_path, output_vid_name="prepare")
 
         # Calculate duration
         end_time = time.time()
@@ -674,7 +675,7 @@ async def generate_fast(
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
         # Run inference (this will use the cached avatar)
-        stdout, stderr = run_inference(config_path)
+        stdout, stderr = run_inference(config_path, output_vid_name="fast_generated")
 
         # Find generated video - search by specific filename pattern
         possible_dirs = [
@@ -809,7 +810,7 @@ async def generate_fast_url(
             config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
             # Run inference
-            stdout, stderr = run_inference(config_path)
+            stdout, stderr = run_inference(config_path, output_vid_name="fast_url_generated")
 
             # Find generated video
             output_video = None
@@ -942,7 +943,7 @@ async def generate_multi_fast(
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
         # Run inference (this will process all audios sequentially)
-        stdout, stderr = run_inference(config_path)
+        stdout, stderr = run_inference(config_path, output_vid_name="multi_audio")
 
         # Find all generated videos - search by specific filename patterns
         possible_dirs = [
