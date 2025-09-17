@@ -41,10 +41,10 @@ echo "⬇️ Downloading model weights..."
 sh ./download_weights.sh || true
 
 
-mkdir -p /workspace/MuseTalk/results/v15/avatars
-curl -fL --retry 5 --retry-all-errors -o /tmp/avatar_1_minute_preset.zip "https://audios-avatar.s3.eu-north-1.amazonaws.com/avatar_1_minute_preset.zip"
-unzip -o /tmp/avatar_1_minute_preset.zip -d /workspace/MuseTalk/results/v15/avatars/
-rm /tmp/avatar_1_minute_preset.zip
+# mkdir -p /workspace/MuseTalk/results/v15/avatars
+# curl -fL --retry 5 --retry-all-errors -o /tmp/avatar_1_minute_preset.zip "https://audios-avatar.s3.eu-north-1.amazonaws.com/avatar_1_minute_preset.zip"
+# unzip -o /tmp/avatar_1_minute_preset.zip -d /workspace/MuseTalk/results/v15/avatars/
+# rm /tmp/avatar_1_minute_preset.zip
 
 
 echo "🚀 Starting MuseTalk Realtime API server..."
