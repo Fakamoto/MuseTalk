@@ -423,9 +423,9 @@ async def generate_video(
     try:
         print("📁 Step 1: Validating file types...")
         # Validate file types
-        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
-            print(f"❌ Invalid video file type: {video.filename}")
-            raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
+        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov', '.jpg', '.jpeg', '.png', '.webp')):
+            print(f"❌ Invalid video/image file type: {video.filename}")
+            raise HTTPException(status_code=400, detail="Video must be MP4, AVI, MOV, JPG, JPEG, PNG, or WEBP")
         if not audio.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
             print(f"❌ Invalid audio file type: {audio.filename}")
             raise HTTPException(status_code=400, detail="Audio must be MP3, WAV, or M4A")
@@ -537,8 +537,8 @@ async def prepare_avatar(
         print(f"🔧 [PREPARE] Starting avatar preparation for: {avatar_id}")
 
         # Validate file type
-        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
-            raise HTTPException(status_code=400, detail="Video must be MP4, AVI, or MOV")
+        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov', '.jpg', '.jpeg', '.png', '.webp')):
+            raise HTTPException(status_code=400, detail="Video must be MP4, AVI, MOV, JPG, JPEG, PNG, or WEBP")
 
         # Verificar si el cache ya existe y está preparado
         available_caches = get_available_caches()
