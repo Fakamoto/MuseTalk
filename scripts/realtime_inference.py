@@ -69,7 +69,7 @@ class Avatar:
         self.full_imgs_path = f"{self.avatar_path}/full_imgs"
         self.coords_path = f"{self.avatar_path}/coords.pkl"
         self.latents_out_path = f"{self.avatar_path}/latents.pt"
-        self.video_out_path = f"{self.avatar_path}/vid_output/"
+        self.video_out_path = f"{self.avatar_path}/vid_output"
         self.mask_out_path = f"{self.avatar_path}/mask"
         self.mask_coords_path = f"{self.avatar_path}/mask_coords.pkl"
         self.avatar_info_path = f"{self.avatar_path}/avator_info.json"
@@ -293,6 +293,9 @@ class Avatar:
 
         if out_vid_name is not None and args.skip_save_images is False:
             # optional
+            # Ensure vid_output directory exists
+            os.makedirs(self.video_out_path, exist_ok=True)
+
             cmd_img2video = f"ffmpeg -y -v warning -r {fps} -f image2 -i {self.avatar_path}/tmp/%08d.png -vcodec libx264 -vf format=yuv420p -crf 18 {self.avatar_path}/temp.mp4"
             print(cmd_img2video)
             os.system(cmd_img2video)
