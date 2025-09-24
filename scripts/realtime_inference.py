@@ -55,7 +55,7 @@ def osmakedirs(path_list):
 
 @torch.no_grad()
 class Avatar:
-    def __init__(self, avatar_id, video_path, bbox_shift, batch_size, preparation, version="v15", output_dir=None):
+    def __init__(self, avatar_id, video_path, bbox_shift, batch_size, preparation, version="v15", output_dir=None, vae=None, face_parser=None, extra_margin=10, parsing_mode='jaw', device=None, unet=None, pe=None, timesteps=None, whisper=None, audio_processor=None, weight_dtype=None, audio_padding_length_left=2, audio_padding_length_right=2, skip_save_images=False):
         self.avatar_id = avatar_id
         self.video_path = video_path
         self.bbox_shift = bbox_shift
@@ -85,10 +85,24 @@ class Avatar:
             "avatar_id": avatar_id,
             "video_path": video_path,
             "bbox_shift": bbox_shift,
-            "version": args.version
+            "version": version
         }
         self.preparation = preparation
         self.batch_size = batch_size
+        self.vae = vae
+        self.face_parser = face_parser
+        self.extra_margin = extra_margin
+        self.parsing_mode = parsing_mode
+        self.device = device
+        self.unet = unet
+        self.pe = pe
+        self.timesteps = timesteps
+        self.whisper = whisper
+        self.audio_processor = audio_processor
+        self.weight_dtype = weight_dtype
+        self.audio_padding_length_left = audio_padding_length_left
+        self.audio_padding_length_right = audio_padding_length_right
+        self.skip_save_images = skip_save_images
         self.idx = 0
         self.init()
 
@@ -179,13 +193,13 @@ class Avatar:
             if bbox == coord_placeholder:
                 continue
             x1, y1, x2, y2 = bbox
-            if args.version == "v15":
-                y2 = y2 + args.extra_margin
+            if self.version == "v15":
+                y2 = y2 + self.extra_margin
                 y2 = min(y2, frame.shape[0])
                 coord_list[idx] = [x1, y1, x2, y2]  # 更新coord_list中的bbox
             crop_frame = frame[y1:y2, x1:x2]
             resized_crop_frame = cv2.resize(crop_frame, (256, 256), interpolation=cv2.INTER_LANCZOS4)
-            latents = vae.get_latents_for_unet(resized_crop_frame)
+            latents = self.vae.get_latents_for_unet(resized_crop_frame)
             input_latent_list.append(latents)
 
         self.frame_list_cycle = frame_list + frame_list[::-1]
@@ -198,11 +212,11 @@ class Avatar:
             cv2.imwrite(f"{self.full_imgs_path}/{str(i).zfill(8)}.png", frame)
 
             x1, y1, x2, y2 = self.coord_list_cycle[i]
-            if args.version == "v15":
-                mode = args.parsing_mode
+            if self.version == "v15":
+                mode = self.parsing_mode
             else:
                 mode = "raw"
-            mask, crop_box = get_image_prepare_material(frame, [x1, y1, x2, y2], fp=fp, mode=mode)
+            mask, crop_box = get_image_prepare_material(frame, [x1, y1, x2, y2], fp=self.face_parser, mode=mode)
 
             cv2.imwrite(f"{self.mask_out_path}/{str(i).zfill(8)}.png", mask)
             self.mask_coords_list_cycle += [crop_box]
@@ -249,16 +263,16 @@ class Avatar:
         ############################################## extract audio feature ##############################################
         start_time = time.time()
         # Extract audio features
-        whisper_input_features, librosa_length = audio_processor.get_audio_feature(audio_path, weight_dtype=weight_dtype)
-        whisper_chunks = audio_processor.get_whisper_chunk(
+        whisper_input_features, librosa_length = self.audio_processor.get_audio_feature(audio_path, weight_dtype=self.weight_dtype)
+        whisper_chunks = self.audio_processor.get_whisper_chunk(
             whisper_input_features,
-            device,
-            weight_dtype,
-            whisper,
+            self.device,
+            self.weight_dtype,
+            self.whisper,
             librosa_length,
             fps=fps,
-            audio_padding_length_left=args.audio_padding_length_left,
-            audio_padding_length_right=args.audio_padding_length_right,
+            audio_padding_length_left=self.audio_padding_length_left,
+            audio_padding_length_right=self.audio_padding_length_right,
         )
         print(f"processing audio:{audio_path} costs {(time.time() - start_time) * 1000}ms")
         ############################################## inference batch by batch ##############################################
@@ -276,20 +290,20 @@ class Avatar:
         res_frame_list = []
 
         for i, (whisper_batch, latent_batch) in enumerate(tqdm(gen, total=int(np.ceil(float(video_num) / self.batch_size)))):
-            audio_feature_batch = pe(whisper_batch.to(device))
-            latent_batch = latent_batch.to(device=device, dtype=unet.model.dtype)
+            audio_feature_batch = self.pe(whisper_batch.to(self.device))
+            latent_batch = latent_batch.to(device=self.device, dtype=self.unet.model.dtype)
 
-            pred_latents = unet.model(latent_batch,
-                                    timesteps,
+            pred_latents = self.unet.model(latent_batch,
+                                    self.timesteps,
                                     encoder_hidden_states=audio_feature_batch).sample
-            pred_latents = pred_latents.to(device=device, dtype=vae.vae.dtype)
-            recon = vae.decode_latents(pred_latents)
+            pred_latents = pred_latents.to(device=self.device, dtype=self.vae.vae.dtype)
+            recon = self.vae.decode_latents(pred_latents)
             for res_frame in recon:
                 res_frame_queue.put(res_frame)
         # Close the queue and sub-thread after all tasks are completed
         process_thread.join()
 
-        if args.skip_save_images is True:
+        if self.skip_save_images is True:
             print('Total process time of {} frames without saving images = {}s'.format(
                 video_num,
                 time.time() - start_time))
@@ -298,7 +312,7 @@ class Avatar:
                 video_num,
                 time.time() - start_time))
 
-        if out_vid_name is not None and args.skip_save_images is False:
+        if out_vid_name is not None and self.skip_save_images is False:
             # optional
             # Ensure vid_output directory exists
             os.makedirs(self.video_out_path, exist_ok=True)
@@ -411,7 +425,21 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             preparation=data_preparation,
             version=args.version,
-            output_dir=args.output_dir)
+            output_dir=args.output_dir,
+            vae=vae,
+            face_parser=fp,
+            extra_margin=args.extra_margin,
+            parsing_mode=args.parsing_mode,
+            device=device,
+            unet=unet,
+            pe=pe,
+            timesteps=timesteps,
+            whisper=whisper,
+            audio_processor=audio_processor,
+            weight_dtype=weight_dtype,
+            audio_padding_length_left=args.audio_padding_length_left,
+            audio_padding_length_right=args.audio_padding_length_right,
+            skip_save_images=args.skip_save_images)
 
         # Process audio clips if provided (regardless of preparation mode)
         audio_clips = inference_config[avatar_id].get("audio_clips", {})

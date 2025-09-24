@@ -439,7 +439,21 @@ def run_inference(config_path: str, output_video_path: Path):
                 bbox_shift=bbox_shift,
                 batch_size=BATCH_SIZE,
                 preparation=data_preparation,
-                version=VERSION)
+                version=VERSION,
+                vae=vae,
+                face_parser=fp,
+                extra_margin=10,
+                parsing_mode='jaw',
+                device=device,
+                unet=unet,
+                pe=pe,
+                timesteps=timesteps,
+                whisper=whisper,
+                audio_processor=audio_processor,
+                weight_dtype=weight_dtype,
+                audio_padding_length_left=2,
+                audio_padding_length_right=2,
+                skip_save_images=False)
 
             # Process audio clips if provided
             audio_clips = inference_config[avatar_id].get("audio_clips", {})
