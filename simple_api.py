@@ -87,9 +87,9 @@ async def generate_video(
 
             print(f"📝 Created config: {config_path}")
 
-            # Build CLI command
+            # Build CLI command - use uv run to ensure proper environment
             cmd = [
-                "python", "scripts/realtime_inference.py",
+                "uv", "run", "python", "scripts/realtime_inference.py",
                 "--version", VERSION,
                 "--gpu_id", str(GPU_ID),
                 "--batch_size", str(BATCH_SIZE),
