@@ -48,6 +48,7 @@ sh ./download_weights.sh || true
 
 
 cp ./restart.sh /restart.sh
+cp ./restart.sh /root/restart.sh
 chmod +x /restart.sh
 
 
