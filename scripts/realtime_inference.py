@@ -55,13 +55,13 @@ def osmakedirs(path_list):
 
 @torch.no_grad()
 class Avatar:
-    def __init__(self, avatar_id, video_path, bbox_shift, batch_size, preparation):
+    def __init__(self, avatar_id, video_path, bbox_shift, batch_size, preparation, version="v15", output_dir=None):
         self.avatar_id = avatar_id
         self.video_path = video_path
         self.bbox_shift = bbox_shift
         # 根据版本设置不同的基础路径
-        if args.version == "v15":
-            self.base_path = f"./results/{args.version}/avatars/{avatar_id}"
+        if version == "v15":
+            self.base_path = f"./results/{version}/avatars/{avatar_id}"
         else:  # v1
             self.base_path = f"./results/avatars/{avatar_id}"
 
@@ -71,8 +71,8 @@ class Avatar:
         self.latents_out_path = f"{self.avatar_path}/latents.pt"
 
         # Use custom output directory if provided, otherwise use default
-        if args.output_dir:
-            self.video_out_path = args.output_dir
+        if output_dir:
+            self.video_out_path = output_dir
             # Ensure custom output directory exists
             os.makedirs(self.video_out_path, exist_ok=True)
         else:
@@ -409,7 +409,9 @@ if __name__ == "__main__":
             video_path=video_path,
             bbox_shift=bbox_shift,
             batch_size=args.batch_size,
-            preparation=data_preparation)
+            preparation=data_preparation,
+            version=args.version,
+            output_dir=args.output_dir)
 
         # Process audio clips if provided (regardless of preparation mode)
         audio_clips = inference_config[avatar_id].get("audio_clips", {})

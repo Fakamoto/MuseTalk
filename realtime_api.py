@@ -438,7 +438,8 @@ def run_inference(config_path: str, output_video_path: Path):
                 video_path=video_path,
                 bbox_shift=bbox_shift,
                 batch_size=BATCH_SIZE,
-                preparation=data_preparation)
+                preparation=data_preparation,
+                version=VERSION)
 
             # Process audio clips if provided
             audio_clips = inference_config[avatar_id].get("audio_clips", {})
