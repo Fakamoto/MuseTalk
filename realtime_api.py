@@ -290,7 +290,7 @@ def run_inference(config_path: str, output_video_path: Path):
     ]
 
     print(f"🚀 Command to execute: {' '.join(cmd_args)}")
-    print(f"📍 Working directory: {os.getcwd()}")
+    print(f"📍 Working directory: {THIS_DIR}")
     print(f"📄 Config file exists: {config_path.exists()}")
     print(f"📄 Config file size: {config_path.stat().st_size if config_path.exists() else 0} bytes")
 
@@ -300,7 +300,7 @@ def run_inference(config_path: str, output_video_path: Path):
         result = subprocess.run(
             cmd_args,
             check=True,
-            cwd=os.getcwd(),
+            cwd=str(THIS_DIR),  # Use the project directory, not current working directory
             timeout=1800  # 30 minutes timeout
         )
 
