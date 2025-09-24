@@ -3,7 +3,7 @@ set -euo pipefail
 echo "🔄 Restarting MuseTalk Realtime API server..."
 
 echo "🛑 Killing existing process on port 8000..."
-pkill -f ":8000" || true
+pkill -f 8000 || true
 
 # Wait for the port to be freed
 sleep 2
