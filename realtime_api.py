@@ -25,12 +25,29 @@ import subprocess
 import time
 import tempfile
 import requests
+import argparse
+import sys
+from omegaconf import OmegaConf
+import numpy as np
+import cv2
+import torch
+import glob
+import pickle
+from tqdm import tqdm
+import copy
+import json
+from transformers import WhisperModel
 
 import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
+
+# Import inference modules
+from scripts.realtime_inference import Avatar, load_all_model, fast_check_ffmpeg
+from musetalk.utils.face_parsing import FaceParsing
+from musetalk.utils.audio_processor import AudioProcessor
 
 # ====================================================================
 # CONFIGURACIÓN GLOBAL
@@ -40,7 +57,7 @@ VERSION = "v15"
 GPU_ID = 0
 BBOX_SHIFT = 5
 FPS = 25
-BATCH_SIZE = 8
+BATCH_SIZE = 20
 
 THIS_DIR = Path(__file__).parent
 
@@ -265,46 +282,176 @@ def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, prepa
 
     return config_path
 
-def run_inference(config_path: str, output_video_path: Path):
-    """Run realtime inference with given config and return output video path"""
-    print("🔧 Building inference command...")
+# Global model cache to avoid reloading
+_model_cache = {}
+
+# Global variables that Avatar.inference expects (will be set when models are loaded)
+audio_processor = None
+device = None
+weight_dtype = None
+whisper = None
+vae = None
+unet = None
+pe = None
+timesteps = None
+fp = None
+args = None
+
+def get_or_load_models():
+    """Load and cache models to avoid reloading on every inference call"""
+    global _model_cache
+
+    cache_key = f"{VERSION}_{GPU_ID}"
+    if cache_key in _model_cache:
+        print("✅ Using cached models")
+        return _model_cache[cache_key]
+
+    print("🔧 Loading models (this may take a moment)...")
+
+    # Set computing device
+    device = torch.device(f"cuda:{GPU_ID}" if torch.cuda.is_available() else "cpu")
+    print(f"📦 Using device: {device}")
+
+    # Configure ffmpeg path
+    if not fast_check_ffmpeg():
+        print("Adding ffmpeg to PATH")
+        # Choose path separator based on operating system
+        path_separator = ';' if sys.platform == 'win32' else ':'
+        ffmpeg_path = "/usr/bin"  # Default ffmpeg path
+        os.environ["PATH"] = f"{ffmpeg_path}{path_separator}{os.environ['PATH']}"
+        if not fast_check_ffmpeg():
+            print("Warning: Unable to find ffmpeg, please ensure ffmpeg is properly installed")
 
     unet_model_path, unet_config = get_model_paths()
-    print(f"📦 Model paths: unet={unet_model_path}, config={unet_config}")
+
+    # Load model weights
+    vae, unet, pe = load_all_model(
+        unet_model_path=unet_model_path,
+        vae_type="sd-vae",
+        unet_config=unet_config,
+        device=device
+    )
+    timesteps = torch.tensor([0], device=device)
+
+    pe = pe.half().to(device)
+    vae.vae = vae.vae.half().to(device)
+    unet.model = unet.model.half().to(device)
+
+    # Initialize audio processor and Whisper model
+    whisper_dir = "./models/whisper"
+    audio_processor = AudioProcessor(feature_extractor_path=whisper_dir)
+    weight_dtype = unet.model.dtype
+    whisper = WhisperModel.from_pretrained(whisper_dir)
+    whisper = whisper.to(device=device, dtype=weight_dtype).eval()
+    whisper.requires_grad_(False)
+
+    # Initialize face parser with configurable parameters based on version
+    if VERSION == "v15":
+        fp = FaceParsing(left_cheek_width=90, right_cheek_width=90)
+    else:  # v1
+        fp = FaceParsing()
+
+    models = {
+        'vae': vae,
+        'unet': unet,
+        'pe': pe,
+        'timesteps': timesteps,
+        'audio_processor': audio_processor,
+        'whisper': whisper,
+        'face_parser': fp,
+        'device': device
+    }
+
+    _model_cache[cache_key] = models
+    print("✅ Models loaded and cached")
+    return models
+
+def run_inference(config_path: str, output_video_path: Path):
+    """Run realtime inference directly (not as subprocess) for much better performance"""
+    print("🔧 Starting direct inference...")
+
+    # Load models (cached after first call)
+    models = get_or_load_models()
+
     print(f"📍 Output video will be saved to: {output_video_path}")
 
-    # Extract output directory and filename for the script
+    # Extract output directory and filename
     output_dir = output_video_path.parent
     output_filename = output_video_path.stem  # without .mp4 extension
 
-    cmd_args = [
-        "python3", "-m", "scripts.realtime_inference",
-        "--inference_config", str(config_path),
-        "--gpu_id", str(GPU_ID),
-        "--version", VERSION,
-        "--bbox_shift", str(BBOX_SHIFT),
-        "--fps", str(FPS),
-        "--batch_size", str(BATCH_SIZE),
-        "--output_vid_name", output_filename,
-        "--output_dir", str(output_dir)
-    ]
+    # Set global variables that the Avatar.inference method expects
 
-    print(f"🚀 Command to execute: {' '.join(cmd_args)}")
-    print(f"📍 Working directory: {THIS_DIR}")
-    print(f"📄 Config file exists: {config_path.exists()}")
-    print(f"📄 Config file size: {config_path.stat().st_size if config_path.exists() else 0} bytes")
+    # Extract models from cache
+    audio_processor = models['audio_processor']
+    device = models['device']
+    vae = models['vae']
+    unet = models['unet']
+    pe = models['pe']
+    timesteps = models['timesteps']
+    fp = models['face_parser']
+    whisper = models['whisper']
+    weight_dtype = unet.model.dtype
+
+    # Create a mock args object with required attributes
+    class MockArgs:
+        def __init__(self):
+            self.version = VERSION
+            self.output_dir = None
+            self.extra_margin = 10
+            self.parsing_mode = 'jaw'
+            self.audio_padding_length_left = 2
+            self.audio_padding_length_right = 2
+            self.skip_save_images = False
+            self.ffmpeg_path = "/usr/bin"
+            self.gpu_id = GPU_ID
+            self.unet_model_path = get_model_paths()[0]
+            self.vae_type = "sd-vae"
+            self.unet_config = get_model_paths()[1]
+            self.whisper_dir = "./models/whisper"
+            self.left_cheek_width = 90
+            self.right_cheek_width = 90
+            self.inference_config = None  # Will be set per call
+            self.fps = FPS
+            self.batch_size = BATCH_SIZE
+
+    args = MockArgs()
 
     try:
-        print("⚡ Executing inference process...")
-        # Don't capture output so progress is shown in real-time
-        result = subprocess.run(
-            cmd_args,
-            check=True,
-            cwd=str(THIS_DIR),  # Use the project directory, not current working directory
-            timeout=1800  # 30 minutes timeout
-        )
+        print("⚡ Executing inference...")
 
-        print("✅ Inference process completed successfully")
+        # Load inference config
+        inference_config = OmegaConf.load(config_path)
+        print(f"📄 Loaded config: {inference_config}")
+
+        for avatar_id in inference_config:
+            data_preparation = inference_config[avatar_id]["preparation"]
+            video_path = inference_config[avatar_id]["video_path"]
+
+            if VERSION == "v15":
+                bbox_shift = 0
+            else:
+                bbox_shift = inference_config[avatar_id]["bbox_shift"]
+
+            # Create avatar instance
+            avatar = Avatar(
+                avatar_id=avatar_id,
+                video_path=video_path,
+                bbox_shift=bbox_shift,
+                batch_size=BATCH_SIZE,
+                preparation=data_preparation)
+
+            # Process audio clips if provided
+            audio_clips = inference_config[avatar_id].get("audio_clips", {})
+            if audio_clips:  # Only process if there are actual audio clips
+                for audio_num, audio_path in audio_clips.items():
+                    print(f"🎵 Inferring using: {audio_path}")
+
+                    # Use custom output filename instead of audio_num
+                    avatar.inference(audio_path, output_filename, FPS, skip_save_images=False)
+            else:
+                print("No audio clips to process - this appears to be a preparation-only run")
+
+        print("✅ Inference completed successfully")
 
         # Verify the output file was created
         if not output_video_path.exists():
@@ -320,10 +467,11 @@ def run_inference(config_path: str, output_video_path: Path):
         print(f"✅ Output video verified: {output_video_path} ({file_size} bytes)")
         return output_video_path
 
-    except subprocess.CalledProcessError as e:
-        print("❌ Inference process failed!")
-        print(f"💥 Exit code: {e.returncode}")
-        print("💥 Check the output above for error details")
+    except Exception as e:
+        print(f"❌ Inference failed: {type(e).__name__}: {str(e)}")
+        import traceback
+        print("📋 Full traceback:")
+        traceback.print_exc()
 
         # Check if config file is readable
         if config_path.exists():
@@ -337,11 +485,8 @@ def run_inference(config_path: str, output_video_path: Path):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Inference failed (exit code {e.returncode}): {e.stderr}"
+            detail=f"Inference failed: {str(e)}"
         )
-    except Exception as e:
-        print(f"❌ Unexpected error in run_inference: {type(e).__name__}: {str(e)}")
-        raise
 
 def save_uploaded_file(upload_file: UploadFile, filename: str) -> str:
     """Save uploaded file and return path"""
@@ -471,6 +616,8 @@ async def generate_video(
         print(f"✅ Config created: {config_path}")
 
         print("🤖 Step 4: Running inference...")
+        inference_start = time.time()
+
         # Decide output path beforehand
         output_name = "fast_generated" if cache_exists else "generated"
         output_video_path = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output" / f"{output_name}.mp4"
@@ -480,7 +627,8 @@ async def generate_video(
 
         # Run inference and get the verified output path back
         verified_output_path = run_inference(config_path, output_video_path)
-        print("✅ Inference completed")
+        inference_end = time.time()
+        print(f"✅ Inference subprocess completed in {(inference_end - inference_start):.2f}s")
 
         # Calculate total duration
         end_time = time.time()
@@ -491,15 +639,39 @@ async def generate_video(
 
         # Clean up temp files
         print("🧹 Cleaning up temp files...")
+        cleanup_start = time.time()
         config_path.unlink(missing_ok=True)
-        print("✅ Cleanup completed")
+        cleanup_end = time.time()
+        print(f"✅ Cleanup completed in {(cleanup_end - cleanup_start):.2f}s")
 
         mode = "fast" if cache_exists else "full"
-        return FileResponse(
-            path=str(verified_output_path),
+
+        # Get file size for content-length header
+        file_size = verified_output_path.stat().st_size
+        print(f"📁 Output file size: {file_size} bytes")
+
+        # Read file content and return as Response instead of FileResponse
+        # to avoid potential streaming delays
+        file_read_start = time.time()
+        with open(verified_output_path, 'rb') as f:
+            file_content = f.read()
+        file_read_end = time.time()
+        print(f"📖 File read in {(file_read_end - file_read_start):.2f}s")
+
+        response_start = time.time()
+        from fastapi import Response
+        response = Response(
+            content=file_content,
             media_type='video/mp4',
-            filename=f"{duration:.2f}s_{mode}.mp4"
+            headers={
+                "Content-Length": str(file_size),
+                "Content-Disposition": f'attachment; filename="{duration:.2f}s_{mode}.mp4"'
+            }
         )
+        response_end = time.time()
+        print(f"📤 Response created in {(response_end - response_start):.2f}s")
+
+        return response
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
