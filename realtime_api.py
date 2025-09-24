@@ -58,7 +58,7 @@ VERSION = "v15"
 GPU_ID = 0
 BBOX_SHIFT = 5
 FPS = 25
-BATCH_SIZE = 64
+BATCH_SIZE = 8
 
 THIS_DIR = Path(__file__).parent
 
