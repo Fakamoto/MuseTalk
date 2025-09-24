@@ -43,6 +43,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager
 
 # Import inference modules
 from scripts.realtime_inference import Avatar, load_all_model, fast_check_ffmpeg
@@ -204,12 +205,7 @@ check_environment()
 # ====================================================================
 # FASTAPI APP
 # ====================================================================
-
-app = FastAPI(
-    title="MuseTalk Realtime API",
-    description="API for realtime avatar generation with caching",
-    version="1.0.0"
-)
+# App will be created after lifespan function is defined
 
 def get_model_paths():
     """Get model paths based on version"""
@@ -282,10 +278,7 @@ def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, prepa
 
     return config_path
 
-# Global model cache to avoid reloading
-_model_cache = {}
-
-# Global variables that Avatar.inference expects (will be set when models are loaded)
+# Global variables that will be set at startup
 audio_processor = None
 device = None
 weight_dtype = None
@@ -297,16 +290,11 @@ timesteps = None
 fp = None
 args = None
 
-def get_or_load_models():
-    """Load and cache models to avoid reloading on every inference call"""
-    global _model_cache
+def load_models_at_startup():
+    """Load all models at startup and set global variables"""
+    global audio_processor, device, weight_dtype, whisper, vae, unet, pe, timesteps, fp, args
 
-    cache_key = f"{VERSION}_{GPU_ID}"
-    if cache_key in _model_cache:
-        print("✅ Using cached models")
-        return _model_cache[cache_key]
-
-    print("🔧 Loading models (this may take a moment)...")
+    print("🔧 Loading models at startup (this may take a moment)...")
 
     # Set computing device
     device = torch.device(f"cuda:{GPU_ID}" if torch.cuda.is_available() else "cpu")
@@ -351,47 +339,6 @@ def get_or_load_models():
     else:  # v1
         fp = FaceParsing()
 
-    models = {
-        'vae': vae,
-        'unet': unet,
-        'pe': pe,
-        'timesteps': timesteps,
-        'audio_processor': audio_processor,
-        'whisper': whisper,
-        'face_parser': fp,
-        'device': device
-    }
-
-    _model_cache[cache_key] = models
-    print("✅ Models loaded and cached")
-    return models
-
-def run_inference(config_path: str, output_video_path: Path):
-    """Run realtime inference directly (not as subprocess) for much better performance"""
-    print("🔧 Starting direct inference...")
-
-    # Load models (cached after first call)
-    models = get_or_load_models()
-
-    print(f"📍 Output video will be saved to: {output_video_path}")
-
-    # Extract output directory and filename
-    output_dir = output_video_path.parent
-    output_filename = output_video_path.stem  # without .mp4 extension
-
-    # Set global variables that the Avatar.inference method expects
-
-    # Extract models from cache
-    audio_processor = models['audio_processor']
-    device = models['device']
-    vae = models['vae']
-    unet = models['unet']
-    pe = models['pe']
-    timesteps = models['timesteps']
-    fp = models['face_parser']
-    whisper = models['whisper']
-    weight_dtype = unet.model.dtype
-
     # Create a mock args object with required attributes
     class MockArgs:
         def __init__(self):
@@ -404,10 +351,10 @@ def run_inference(config_path: str, output_video_path: Path):
             self.skip_save_images = False
             self.ffmpeg_path = "/usr/bin"
             self.gpu_id = GPU_ID
-            self.unet_model_path = get_model_paths()[0]
+            self.unet_model_path = unet_model_path
             self.vae_type = "sd-vae"
-            self.unet_config = get_model_paths()[1]
-            self.whisper_dir = "./models/whisper"
+            self.unet_config = unet_config
+            self.whisper_dir = whisper_dir
             self.left_cheek_width = 90
             self.right_cheek_width = 90
             self.inference_config = None  # Will be set per call
@@ -415,6 +362,42 @@ def run_inference(config_path: str, output_video_path: Path):
             self.batch_size = BATCH_SIZE
 
     args = MockArgs()
+
+    print("✅ Models loaded and ready at startup")
+
+#######################
+# LIFESPAN MANAGEMENT
+#######################
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("🚀 Starting MuseTalk Realtime API...")
+    load_models_at_startup()
+
+    yield
+    # Shutdown
+    print("🛑 Shutting down MuseTalk Realtime API...")
+
+# Create FastAPI app with lifespan
+app = FastAPI(
+    title="MuseTalk Realtime API",
+    description="API for realtime avatar generation with caching",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+def run_inference(config_path: str, output_video_path: Path):
+    """Run realtime inference directly (not as subprocess) for much better performance"""
+    print("🔧 Starting direct inference...")
+
+    # Use pre-loaded models from global variables
+    global audio_processor, device, weight_dtype, whisper, vae, unet, pe, timesteps, fp, args
+
+    print(f"📍 Output video will be saved to: {output_video_path}")
+
+    # Extract output directory and filename
+    output_dir = output_video_path.parent
+    output_filename = output_video_path.stem  # without .mp4 extension
 
     try:
         print("⚡ Executing inference...")

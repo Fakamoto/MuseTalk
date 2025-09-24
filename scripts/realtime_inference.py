@@ -60,6 +60,7 @@ class Avatar:
         self.video_path = video_path
         self.bbox_shift = bbox_shift
         # 根据版本设置不同的基础路径
+        self.version = version
         if version == "v15":
             self.base_path = f"./results/{version}/avatars/{avatar_id}"
         else:  # v1
