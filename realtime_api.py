@@ -40,10 +40,12 @@ VERSION = "v15"
 GPU_ID = 0
 BBOX_SHIFT = 5
 FPS = 25
-BATCH_SIZE = 20
+BATCH_SIZE = 8
+
+THIS_DIR = Path(__file__).parent
 
 # Directorio para archivos temporales
-TEMP_DIR = Path("./temp_api_files")
+TEMP_DIR = THIS_DIR / "temp_api_files"
 TEMP_DIR.mkdir(exist_ok=True)
 
 def get_available_caches():
@@ -294,21 +296,15 @@ def run_inference(config_path: str, output_video_path: Path):
 
     try:
         print("⚡ Executing inference process...")
+        # Don't capture output so progress is shown in real-time
         result = subprocess.run(
             cmd_args,
-            capture_output=True,
-            text=True,
             check=True,
-            cwd=os.getcwd()
+            cwd=os.getcwd(),
+            timeout=1800  # 30 minutes timeout
         )
 
         print("✅ Inference process completed successfully")
-        print(f"📝 STDOUT length: {len(result.stdout)} chars")
-        print(f"⚠️  STDERR length: {len(result.stderr)} chars")
-
-        if result.stderr:
-            print("⚠️  STDERR content:")
-            print(result.stderr)
 
         # Verify the output file was created
         if not output_video_path.exists():
@@ -327,8 +323,7 @@ def run_inference(config_path: str, output_video_path: Path):
     except subprocess.CalledProcessError as e:
         print("❌ Inference process failed!")
         print(f"💥 Exit code: {e.returncode}")
-        print(f"💥 STDERR: {e.stderr}")
-        print(f"💥 STDOUT: {e.stdout}")
+        print("💥 Check the output above for error details")
 
         # Check if config file is readable
         if config_path.exists():
@@ -564,7 +559,9 @@ async def prepare_avatar(
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=True)
 
         # Run inference (this will prepare the avatar)
-        stdout, stderr = run_inference(config_path, output_vid_name="prepare")
+        output_video_path = THIS_DIR / "results" / VERSION / "avatars" / avatar_id / "vid_output" / "prepare.mp4"
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        verified_output_path = run_inference(config_path, output_video_path)
 
         # Calculate duration
         end_time = time.time()
@@ -675,7 +672,9 @@ async def generate_fast(
         config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
         # Run inference (this will use the cached avatar)
-        stdout, stderr = run_inference(config_path, output_vid_name="fast_generated")
+        output_video_path = THIS_DIR / "results" / VERSION / "avatars" / avatar_id / "vid_output" / "fast_generated.mp4"
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        verified_output_path = run_inference(config_path, output_video_path)
 
         # Find generated video - search by specific filename pattern
         possible_dirs = [
@@ -810,7 +809,8 @@ async def generate_fast_url(
             config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
 
             # Run inference
-            stdout, stderr = run_inference(config_path, output_vid_name="fast_url_generated")
+            output_video_path = vid_output_dir / "fast_url_generated.mp4"
+            verified_output_path = run_inference(config_path, output_video_path)
 
             # Find generated video
             output_video = None
