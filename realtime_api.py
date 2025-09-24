@@ -426,11 +426,11 @@ async def generate_video(
     avatar_id: str = Form("generated_avatar")
 ):
     """
-    Endpoint 1: Generate video (auto cache usage)
+    Endpoint 1: Generate video (smart cache usage)
     - Receives video and audio files
     - If avatar_id cache exists: uses cache (fast generation) → filename: *_fast.mp4
     - If avatar_id cache doesn't exist: creates cache + generates video → filename: *_full.mp4
-    - Cache files are preserved for future use
+    - Cache files are preserved for future use (use same avatar_id for same video)
     - Returns the generated video with duration and mode in filename
     """
     start_time = time.time()
