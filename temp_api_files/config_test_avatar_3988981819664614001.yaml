@@ -1,0 +1,6 @@
+test_avatar:
+ preparation: true
+ bbox_shift: 5
+ video_path: "data/video/sun.mp4"
+ audio_clips:
+     generated: "data/audio/sun.wav"

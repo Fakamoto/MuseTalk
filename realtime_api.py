@@ -263,12 +263,17 @@ def create_yaml_config(avatar_id: str, video_path: str, audio_clips: dict, prepa
 
     return config_path
 
-def run_inference(config_path: str, output_vid_name: str = "generated"):
-    """Run realtime inference with given config"""
+def run_inference(config_path: str, output_video_path: Path):
+    """Run realtime inference with given config and return output video path"""
     print("🔧 Building inference command...")
 
     unet_model_path, unet_config = get_model_paths()
     print(f"📦 Model paths: unet={unet_model_path}, config={unet_config}")
+    print(f"📍 Output video will be saved to: {output_video_path}")
+
+    # Extract output directory and filename for the script
+    output_dir = output_video_path.parent
+    output_filename = output_video_path.stem  # without .mp4 extension
 
     cmd_args = [
         "python3", "-m", "scripts.realtime_inference",
@@ -278,7 +283,8 @@ def run_inference(config_path: str, output_vid_name: str = "generated"):
         "--bbox_shift", str(BBOX_SHIFT),
         "--fps", str(FPS),
         "--batch_size", str(BATCH_SIZE),
-        "--output_vid_name", output_vid_name
+        "--output_vid_name", output_filename,
+        "--output_dir", str(output_dir)
     ]
 
     print(f"🚀 Command to execute: {' '.join(cmd_args)}")
@@ -304,7 +310,19 @@ def run_inference(config_path: str, output_vid_name: str = "generated"):
             print("⚠️  STDERR content:")
             print(result.stderr)
 
-        return result.stdout, result.stderr
+        # Verify the output file was created
+        if not output_video_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Inference completed but output video not found at {output_video_path}"
+            )
+
+        file_size = output_video_path.stat().st_size
+        if file_size == 0:
+            raise HTTPException(status_code=500, detail="Generated video file is empty")
+
+        print(f"✅ Output video verified: {output_video_path} ({file_size} bytes)")
+        return output_video_path
 
     except subprocess.CalledProcessError as e:
         print("❌ Inference process failed!")
@@ -413,24 +431,19 @@ async def generate_video(
     avatar_id: str = Form("generated_avatar")
 ):
     """
-    Endpoint 1: Generate video from scratch (no caching)
+    Endpoint 1: Generate video (auto cache usage)
     - Receives video and audio files
-    - Processes from scratch (preparation=True)
-    - Returns the generated video with duration as filename
+    - If avatar_id cache exists: uses cache (fast generation) → filename: *_fast.mp4
+    - If avatar_id cache doesn't exist: creates cache + generates video → filename: *_full.mp4
+    - Cache files are preserved for future use
+    - Returns the generated video with duration and mode in filename
     """
     start_time = time.time()
     print(f"🎬 [GENERATE] Starting video generation for avatar: {avatar_id}")
 
     try:
         print("📁 Step 1: Validating file types...")
-        # Validate file types
-        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov', '.jpg', '.jpeg', '.png', '.webp')):
-            print(f"❌ Invalid video/image file type: {video.filename}")
-            raise HTTPException(status_code=400, detail="Video must be MP4, AVI, MOV, JPG, JPEG, PNG, or WEBP")
-        if not audio.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
-            print(f"❌ Invalid audio file type: {audio.filename}")
-            raise HTTPException(status_code=400, detail="Audio must be MP3, WAV, or M4A")
-        print("✅ File types validated")
+        # We dont validate for now, this is internal API
 
         print("💾 Step 2: Saving uploaded files...")
         # Save uploaded files
@@ -438,73 +451,60 @@ async def generate_video(
         audio_path = save_uploaded_file(audio, f"{avatar_id}_audio{audio.filename}")
         print(f"✅ Files saved: video={video_path}, audio={audio_path}")
 
-        print("📝 Step 3: Creating configuration...")
-        # Create audio clips dict
-        audio_clips = {
-            "generated": audio_path
-        }
+        # Check if cache already exists
+        cache_info = get_cache_info(avatar_id)
+        cache_exists = cache_info and cache_info.get("prepared", False)
 
+        if cache_exists:
+            print(f"📋 Cache exists for {avatar_id} - using fast generation mode")
+            # Use existing cache (like /generate-fast)
+            audio_clips = {
+                "fast_generated": audio_path
+            }
+            preparation = False  # Use existing cache
+        else:
+            print(f"📋 No cache for {avatar_id} - creating cache and generating")
+            # Create new cache + generate
+            audio_clips = {
+                "generated": audio_path
+            }
+            preparation = True  # Create cache
+
+        print("📝 Step 3: Creating configuration...")
         # Create config file
-        config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=True)
+        config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=preparation)
         print(f"✅ Config created: {config_path}")
 
         print("🤖 Step 4: Running inference...")
-        # Run inference
-        stdout, stderr = run_inference(config_path, output_vid_name="generated")
+        # Decide output path beforehand
+        output_name = "fast_generated" if cache_exists else "generated"
+        output_video_path = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output" / f"{output_name}.mp4"
+
+        # Ensure output directory exists
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Run inference and get the verified output path back
+        verified_output_path = run_inference(config_path, output_video_path)
         print("✅ Inference completed")
 
-        print("🔍 Step 5: Looking for output video...")
-        # Find generated video
-        results_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
-        print(f"🔍 Checking directory: {results_dir}")
+        # Calculate total duration
+        end_time = time.time()
+        duration = end_time - start_time
 
-        if results_dir.exists():
-            print(f"📁 Directory exists, listing contents...")
-            all_files = list(results_dir.glob("*"))
-            print(f"📁 All files in directory: {[str(f) for f in all_files]}")
+        # Print duration to terminal
+        print(f"Duration: {duration:.2f}s")
 
-            video_files = list(results_dir.glob("*.mp4"))
-            print(f"🎥 MP4 files found: {[str(f) for f in video_files]}")
+        # Clean up temp files
+        print("🧹 Cleaning up temp files...")
+        config_path.unlink(missing_ok=True)
+        print("✅ Cleanup completed")
 
-            if video_files:
-                output_video = video_files[0]
-                print(f"✅ Found output video: {output_video}")
-
-                # Check if file actually exists and has content
-                if output_video.exists():
-                    file_size = output_video.stat().st_size
-                    print(f"📊 Output video size: {file_size} bytes")
-
-                    if file_size == 0:
-                        print("❌ Output video file is empty!")
-                        raise HTTPException(status_code=500, detail="Generated video file is empty")
-
-                    # Calculate total duration
-                    end_time = time.time()
-                    duration = end_time - start_time
-
-                    # Print duration to terminal
-                    print(f"Duration: {duration:.2f}s")
-                    # Clean up temp files
-                    print("🧹 Cleaning up temp files...")
-                    config_path.unlink(missing_ok=True)
-                    print("✅ Cleanup completed")
-
-                    return FileResponse(
-                        path=output_video,
-                        media_type='video/mp4',
-                        filename=f"{duration:.2f}s_generated.mp4"
-                    )
-                else:
-                    print("❌ Output video file does not exist!")
-            else:
-                print("❌ No MP4 files found in output directory")
-                print("📁 Directory contents:", list(results_dir.iterdir()) if results_dir.exists() else "Directory doesn't exist")
-        else:
-            print(f"❌ Results directory does not exist: {results_dir}")
-
-        print("❌ Video generation completed but output file not found")
-        raise HTTPException(status_code=500, detail="Video generation completed but output file not found")
+        mode = "fast" if cache_exists else "full"
+        return FileResponse(
+            path=str(verified_output_path),
+            media_type='video/mp4',
+            filename=f"{duration:.2f}s_{mode}.mp4"
+        )
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -862,169 +862,6 @@ async def generate_fast_url(
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Fast URL generation failed: {str(e)}")
 
-@app.post("/generate-multi-fast")
-async def generate_multi_fast(
-    avatar_id: str = Form(...),
-    audio_files: list[UploadFile] = File(...)
-):
-    """
-    Endpoint 4: Generate multiple videos using cached avatar (SEQUENTIAL PROCESSING)
-    - Requires avatar to be prepared first (cache folder with required files must exist)
-    - Cache must contain: avator_info.json, coords.pkl, latents.pt, mask_coords.pkl, full_imgs/, mask/
-    - Processes multiple audio files sequentially
-    - Returns a ZIP file containing all generated videos
-
-    Advantages:
-    - Allows batch processing of multiple audios
-    - Reuses prepared avatar for each audio
-    - Returns all results in a single ZIP
-
-    Limitations:
-    - Sequential processing (not parallel)
-    - Total time = sum of individual processing times
-    """
-    start_time = time.time()
-
-    try:
-        print(f"🎵 [MULTI-FAST-GENERATE] Starting batch generation for cache: {avatar_id} with {len(audio_files)} audio files")
-
-        # Check if cache exists and is prepared
-        available_caches = get_available_caches()
-        if avatar_id not in available_caches:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cache '{avatar_id}' not found. Use /prepare endpoint first to create it."
-            )
-
-        cache_info = get_cache_info(avatar_id)
-        if not cache_info or not cache_info.get("prepared"):
-            missing_info = ""
-            if cache_info:
-                missing_files = cache_info.get("missing_files", [])
-                missing_dirs = cache_info.get("missing_dirs", [])
-                if missing_files or missing_dirs:
-                    missing_info = f" Missing files: {missing_files}, Missing dirs: {missing_dirs}"
-
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cache '{avatar_id}' exists but is not properly prepared.{missing_info} Use /prepare endpoint first."
-            )
-
-        # Validate all audio files
-        for i, audio in enumerate(audio_files):
-            if not audio.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Audio file {i+1} ({audio.filename}) must be MP3, WAV, or M4A"
-                )
-
-        # Usar el directorio del cache como referencia para el procesamiento
-        cache_dir = Path("./results") / VERSION / "avatars" / avatar_id
-        video_path = str(cache_dir)  # El script usará los archivos del cache directamente
-
-        # Save all audio files and create clips dict
-        audio_clips = {}
-        saved_audio_paths = []
-
-        for i, audio in enumerate(audio_files):
-            audio_name = f"multi_audio_{i+1}"
-            audio_path = save_uploaded_file(audio, f"{avatar_id}_{audio_name}{audio.filename}")
-            audio_clips[audio_name] = audio_path
-            saved_audio_paths.append(audio_path)
-
-        print(f"💾 Saved {len(audio_files)} audio files for batch processing")
-
-        # Ensure vid_output directory exists before running inference
-        vid_output_dir = Path("./results") / VERSION / "avatars" / avatar_id / "vid_output"
-        vid_output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Ensured vid_output directory exists: {vid_output_dir}")
-
-        # Create config file with preparation=False (use cache)
-        config_path = create_yaml_config(avatar_id, video_path, audio_clips, preparation=False)
-
-        # Run inference (this will process all audios sequentially)
-        stdout, stderr = run_inference(config_path, output_vid_name="multi_audio")
-
-        # Find all generated videos - search by specific filename patterns
-        possible_dirs = [
-            Path("./results") / VERSION / "avatars" / avatar_id / "vid_output",
-            Path("./results") / VERSION / "avatars" / avatar_id,
-            Path("./results") / VERSION / "avatars"
-        ]
-
-        generated_videos = []
-        expected_patterns = list(audio_clips.keys()) + [avatar_id]
-
-        for search_dir in possible_dirs:
-            if search_dir.exists():
-                print(f"🔍 Searching for videos in: {search_dir}")
-                all_mp4_files = list(search_dir.glob("*.mp4"))
-                print(f"📁 Found {len(all_mp4_files)} MP4 files in {search_dir}")
-
-                # Check each MP4 file against expected patterns
-                for mp4_file in all_mp4_files:
-                    file_name = mp4_file.stem
-                    print(f"   Checking: {file_name}.mp4")
-
-                    # Check if filename contains any of the expected patterns
-                    for pattern in expected_patterns:
-                        if pattern in file_name:
-                            if mp4_file not in generated_videos:  # Avoid duplicates
-                                generated_videos.append(mp4_file)
-                                print(f"✅ Collected video: {file_name}.mp4")
-                            break
-
-        if not generated_videos:
-            print("❌ No videos were generated with expected names")
-            # Debug: show all MP4 files found
-            for search_dir in possible_dirs:
-                if search_dir.exists():
-                    all_mp4_files = list(search_dir.glob("*.mp4"))
-                    print(f"📁 {search_dir}: {len(all_mp4_files)} total MP4 files")
-                    for mp4_file in all_mp4_files:
-                        print(f"   - {mp4_file.name}")
-
-            raise HTTPException(status_code=500, detail="No videos were generated")
-
-        # Create ZIP file with all videos
-        import zipfile
-        zip_filename = f"{avatar_id}_batch_{len(generated_videos)}_videos.zip"
-        zip_path = TEMP_DIR / zip_filename
-
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for video_path in generated_videos:
-                # Add video to ZIP with a clean name
-                video_name = video_path.stem
-                zip_file.write(video_path, f"{video_name}.mp4")
-                print(f"📦 Added {video_name}.mp4 to ZIP")
-
-        # Calculate total duration
-        end_time = time.time()
-        duration = end_time - start_time
-
-        # Print duration to terminal
-        print(f"Duration: {duration:.2f}s")
-        print(f"📊 Processed {len(generated_videos)} videos in batch")
-
-        # Clean up temp files
-        config_path.unlink(missing_ok=True)
-
-        return FileResponse(
-            path=zip_path,
-            media_type='application/zip',
-            filename=zip_filename
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Print error duration
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"Duration: {duration:.2f}s")
-
-        raise HTTPException(status_code=500, detail=f"Multi-fast generation failed: {str(e)}")
-
 @app.get("/cache")
 async def get_cache_status():
     """Get current cache status from folders"""
@@ -1061,56 +898,3 @@ async def clear_cache(avatar_id: str):
     except Exception as e:
         print(f"❌ Error deleting cache folder: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete cache '{avatar_id}': {str(e)}")
-
-@app.get("/")
-async def root():
-    """Root endpoint with API information"""
-    available_caches = get_available_caches()
-
-    return {
-        "message": "MuseTalk Realtime API Server - Folder-based Cache System",
-        "endpoints": {
-            "POST /generate": "Generate video from scratch (video + audio)",
-            "POST /prepare": "Prepare avatar for caching (video only) - creates cache folder with any name",
-            "POST /generate-fast": "Generate video using cached avatar (audio only)",
-            "POST /generate-fast-url": "Generate video using cached avatar from audio URL (SIMPLIFIED - auto download)",
-            "POST /generate-multi-fast": "Generate multiple videos using cached avatar (multiple audio files -> ZIP)",
-            "GET /cache": "Get cache status from folders",
-            "DELETE /cache/{avatar_id}": "Clear specific cache folder"
-        },
-        "version": VERSION,
-        "available_caches": available_caches,
-        "cache_directory": f"./results/{VERSION}/avatars/",
-        "cache_format": "Any folder name (e.g., avatar1, mycache, test_cache, etc.)",
-        "cache_requirements": {
-            "required_files": ["avator_info.json", "coords.pkl", "latents.pt", "mask_coords.pkl"],
-            "required_dirs": ["full_imgs", "mask"],
-            "output_handling": "vid_output directory is automatically created before inference",
-            "file_search": "System searches for generated MP4 files by name pattern (not by modification time)"
-        },
-        "note": "Cache system now uses folders instead of memory dict. Cache names can be any string",
-        "features": [
-            "Folder-based cache system",
-            "Persistent cache storage",
-            "Detailed step-by-step logging",
-            "Duration tracking in terminal",
-            "Duration-based filenames",
-            "Enhanced error reporting",
-            "Environment verification",
-            "File validation and size checking",
-            "Multi-audio batch processing",
-            "ZIP file output for multiple results",
-            "Automatic vid_output directory creation",
-            "Intelligent output file search by filename patterns",
-            "Support for copied cache directories",
-            "Audio URL download support (generate-fast-url endpoint)",
-            "Simplified endpoint with automatic temp directory management",
-            "URL-based audio processing with minimal validation"
-        ]
-    }
-
-# ====================================================================
-# EJECUCIÓN DEL SERVIDOR:
-#
-# uv run fastapi run realtime_api.py --port 8000 --host 0.0.0.0
-# ====================================================================

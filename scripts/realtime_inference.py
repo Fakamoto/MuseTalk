@@ -64,12 +64,20 @@ class Avatar:
             self.base_path = f"./results/{args.version}/avatars/{avatar_id}"
         else:  # v1
             self.base_path = f"./results/avatars/{avatar_id}"
-            
+
         self.avatar_path = self.base_path
         self.full_imgs_path = f"{self.avatar_path}/full_imgs"
         self.coords_path = f"{self.avatar_path}/coords.pkl"
         self.latents_out_path = f"{self.avatar_path}/latents.pt"
-        self.video_out_path = f"{self.avatar_path}/vid_output"
+
+        # Use custom output directory if provided, otherwise use default
+        if args.output_dir:
+            self.video_out_path = args.output_dir
+            # Ensure custom output directory exists
+            os.makedirs(self.video_out_path, exist_ok=True)
+        else:
+            self.video_out_path = f"{self.avatar_path}/vid_output"
+
         self.mask_out_path = f"{self.avatar_path}/mask"
         self.mask_coords_path = f"{self.avatar_path}/mask_coords.pkl"
         self.avatar_info_path = f"{self.avatar_path}/avator_info.json"
@@ -144,6 +152,20 @@ class Avatar:
                 input_mask_list = glob.glob(os.path.join(self.mask_out_path, '*.[jpJP][pnPN]*[gG]'))
                 input_mask_list = sorted(input_mask_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
                 self.mask_list_cycle = read_imgs(input_mask_list)
+
+    def load_existing_data(self):
+        """Load existing avatar data from disk"""
+        self.input_latent_list_cycle = torch.load(self.latents_out_path)
+        with open(self.coords_path, 'rb') as f:
+            self.coord_list_cycle = pickle.load(f)
+        input_img_list = glob.glob(os.path.join(self.full_imgs_path, '*.[jpJP][pnPN]*[gG]'))
+        input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+        self.frame_list_cycle = read_imgs(input_img_list)
+        with open(self.mask_coords_path, 'rb') as f:
+            self.mask_coords_list_cycle = pickle.load(f)
+        input_mask_list = glob.glob(os.path.join(self.mask_out_path, '*.[jpJP][pnPN]*[gG]'))
+        input_mask_list = sorted(input_mask_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+        self.mask_list_cycle = read_imgs(input_mask_list)
 
     def prepare_material(self):
         print("preparing data materials ... ...")
@@ -333,6 +355,7 @@ if __name__ == "__main__":
     parser.add_argument("--audio_padding_length_right", type=int, default=2, help="Right padding length for audio")
     parser.add_argument("--batch_size", type=int, default=20, help="Batch size for inference")
     parser.add_argument("--output_vid_name", type=str, default=None, help="Name of output video file")
+    parser.add_argument("--output_dir", type=str, default=None, help="Output directory for video file")
     parser.add_argument("--use_saved_coord", action="store_true", help='Use saved coordinates to save time')
     parser.add_argument("--saved_coord", action="store_true", help='Save coordinates for future use')
     parser.add_argument("--parsing_mode", default='jaw', help="Face blending parsing mode")
@@ -403,17 +426,14 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             preparation=data_preparation)
 
-        # Skip audio processing during preparation
-        if not data_preparation:
-            audio_clips = inference_config[avatar_id].get("audio_clips", {})
-            if audio_clips:  # Only process if there are actual audio clips
-                for audio_num, audio_path in audio_clips.items():
-                    print("Inferring using:", audio_path)
-                    avatar.inference(audio_path,
-                                   audio_num,
-                                   args.fps,
-                                   args.skip_save_images)
-            else:
-                print("No audio clips to process - this appears to be a preparation-only run")
+        # Process audio clips if provided (regardless of preparation mode)
+        audio_clips = inference_config[avatar_id].get("audio_clips", {})
+        if audio_clips:  # Only process if there are actual audio clips
+            for audio_num, audio_path in audio_clips.items():
+                print("Inferring using:", audio_path)
+                avatar.inference(audio_path,
+                               audio_num,
+                               args.fps,
+                               args.skip_save_images)
         else:
-            print("Skipping audio processing - in preparation mode")
+            print("No audio clips to process - this appears to be a preparation-only run")
