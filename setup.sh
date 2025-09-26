@@ -54,7 +54,7 @@ chmod +x /restart.sh
 
 echo "🚀 Starting MuseTalk Realtime API server..."
 
-# uv run fastapi dev simple_api.py --port 8000 --host 0.0.0.0
-uv run fastapi dev realtime_api.py --port 8000 --host 0.0.0.0
+uv run fastapi dev simple_api.py --port 8000 --host 0.0.0.0
+# uv run fastapi dev realtime_api.py --port 8000 --host 0.0.0.0
 
 
