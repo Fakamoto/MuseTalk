@@ -1,0 +1,45 @@
+{
+  "start_time": 1759097800.9104195,
+  "end_time": 1759097800.93254,
+  "total_duration": 0.02212047576904297,
+  "steps": {
+    "file_processing": {
+      "duration": 0.01736617088317871,
+      "timestamp": 1759097800.9292605,
+      "details": {
+        "video_size_bytes": 10632866,
+        "audio_size_bytes": 1203405,
+        "video_filename": "avatar_testing.mp4",
+        "audio_filename": "test_si.mp3"
+      }
+    },
+    "config_creation": {
+      "duration": 0.00030422210693359375,
+      "timestamp": 1759097800.9297905,
+      "details": {
+        "config_size_bytes": 185,
+        "preparation_mode": true
+      }
+    }
+  },
+  "system_metrics": [
+    {
+      "timestamp": 1759097801.0731168,
+      "cpu_percent": 2.9,
+      "cpu_count": 64,
+      "memory_used_gb": 12.314807891845703,
+      "memory_percent": 3.3,
+      "gpu_metrics": {
+        "gpu_utilization": 0.0,
+        "gpu_memory_used": 7564.0,
+        "gpu_memory_total": 32768.0,
+        "gpu_memory_percent": 23.08349609375,
+        "gpu_temperature": 39.0
+      }
+    }
+  ],
+  "subprocess_metrics": {},
+  "file_metrics": {},
+  "avatar_id": "simple_generated",
+  "mode": "simple_subprocess"
+}

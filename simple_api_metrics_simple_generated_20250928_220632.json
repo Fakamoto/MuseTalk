@@ -1,0 +1,94 @@
+{
+  "start_time": 1759097190.1795084,
+  "end_time": 1759097192.5339878,
+  "total_duration": 2.3544793128967285,
+  "steps": {
+    "file_processing": {
+      "duration": 0.016272783279418945,
+      "timestamp": 1759097190.1968517,
+      "details": {
+        "video_size_bytes": 10632866,
+        "audio_size_bytes": 1203405,
+        "video_filename": "avatar_testing.mp4",
+        "audio_filename": "test_si.mp3"
+      }
+    },
+    "config_creation": {
+      "duration": 0.0002846717834472656,
+      "timestamp": 1759097190.1973588,
+      "details": {
+        "config_size_bytes": 185,
+        "preparation_mode": true
+      }
+    }
+  },
+  "system_metrics": [
+    {
+      "timestamp": 1759097190.3643508,
+      "cpu_percent": 5.9,
+      "cpu_count": 64,
+      "memory_used_gb": 13.261566162109375,
+      "memory_percent": 3.5,
+      "gpu_metrics": {
+        "gpu_utilization": 0.0,
+        "gpu_memory_used": 8114.0,
+        "gpu_memory_total": 32768.0,
+        "gpu_memory_percent": 24.761962890625,
+        "gpu_temperature": 40.0
+      }
+    },
+    {
+      "timestamp": 1759097191.0494764,
+      "cpu_percent": 3.6,
+      "cpu_count": 64,
+      "memory_used_gb": 13.320976257324219,
+      "memory_percent": 3.5,
+      "gpu_metrics": {
+        "gpu_utilization": 0.0,
+        "gpu_memory_used": 8114.0,
+        "gpu_memory_total": 32768.0,
+        "gpu_memory_percent": 24.761962890625,
+        "gpu_temperature": 40.0
+      }
+    },
+    {
+      "timestamp": 1759097191.7144623,
+      "cpu_percent": 3.7,
+      "cpu_count": 64,
+      "memory_used_gb": 13.404891967773438,
+      "memory_percent": 3.6,
+      "gpu_metrics": {
+        "gpu_utilization": 0.0,
+        "gpu_memory_used": 8114.0,
+        "gpu_memory_total": 32768.0,
+        "gpu_memory_percent": 24.761962890625,
+        "gpu_temperature": 40.0
+      }
+    },
+    {
+      "timestamp": 1759097192.3805735,
+      "cpu_percent": 4.2,
+      "cpu_count": 64,
+      "memory_used_gb": 13.437862396240234,
+      "memory_percent": 3.6,
+      "gpu_metrics": {
+        "gpu_utilization": 0.0,
+        "gpu_memory_used": 8114.0,
+        "gpu_memory_total": 32768.0,
+        "gpu_memory_percent": 24.761962890625,
+        "gpu_temperature": 40.0
+      }
+    }
+  ],
+  "subprocess_metrics": {
+    "duration": 2.3318030834198,
+    "return_code": 1,
+    "details": {
+      "error": "Subprocess failed",
+      "command": "uv run python scripts/realtime_inference.py --version v15 --gpu_id 0 --batch_size 20 --inference_config /tmp/tmpy71fjomm/config_simple_generated.yaml"
+    }
+  },
+  "file_metrics": {},
+  "avatar_id": "simple_generated",
+  "mode": "simple_subprocess"
+}
