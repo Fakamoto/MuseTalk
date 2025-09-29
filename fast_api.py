@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi import Response
+from fastapi.responses import FileResponse
 
 
 VERSION = "v15"
@@ -54,10 +54,11 @@ async def generate(video: UploadFile = File(...), audio: UploadFile = File(...))
             with open(config_path, "w") as cf:
                 cf.write(config_text)
 
-            results_dir = tmp_path / "results"
+            results_dir = BASE_DIR / "results" / VERSION
+            results_dir.mkdir(parents=True, exist_ok=True)
             unet_path = BASE_DIR / "models" / "musetalkV15" / "unet.pth"
             unet_cfg = BASE_DIR / "models" / "musetalkV15" / "musetalk.json"
-            output_name = "generated.mp4"
+            output_name = "timespent_generation.mp4"
 
             cmd = [
                 "uv", "run", str(BASE_DIR / "scripts" / "inference.py"),
@@ -82,20 +83,19 @@ async def generate(video: UploadFile = File(...), audio: UploadFile = File(...))
             if proc.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"Inference failed (code {proc.returncode})")
 
-            output_file = results_dir / VERSION / output_name
+            output_file = results_dir / output_name
             if not output_file.exists():
                 raise HTTPException(status_code=500, detail="Output video not found")
             if output_file.stat().st_size == 0:
                 raise HTTPException(status_code=500, detail="Output video is empty")
-            with open(output_file, "rb") as f:
-                content = f.read()
 
-            duration = time.time() - start_time
-            headers = {
-                "Content-Length": str(len(content)),
-                "Content-Disposition": f'attachment; filename="{duration:.2f}s_generated.mp4"',
-            }
-            return Response(content=content, media_type="video/mp4", headers=headers)
+            filename = f"{start_time:.0f}_generation.mp4"
+
+            return FileResponse(
+                path=output_file,
+                media_type="video/mp4",
+                filename=filename
+            )
 
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Generation timed out")
