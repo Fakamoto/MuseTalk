@@ -7,6 +7,8 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+import asyncio
+import aiohttp
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 
@@ -24,9 +26,17 @@ app = FastAPI(
 )
 
 
-@app.post("/generate")
-async def generate(video: UploadFile = File(...), audio: UploadFile = File(...)):
-    """Generate a single video as fast as possible without persistent cache."""
+async def download_file(url: str, dest_path: Path) -> None:
+    """Download a file from URL to destination path."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                f.write(await response.read())
+
+
+def process_generation(video_path: Path, audio_path: Path) -> FileResponse:
+    """Process video and audio generation and return the result."""
     import time
     start_time = time.time()
 
@@ -35,16 +45,6 @@ async def generate(video: UploadFile = File(...), audio: UploadFile = File(...))
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-
-            video_path = tmp_path / f"video{Path(video.filename).suffix}"
-            audio_path = tmp_path / f"audio{Path(audio.filename).suffix}"
-
-            with open(video_path, "wb") as vf:
-                import shutil
-                shutil.copyfileobj(video.file, vf)
-            with open(audio_path, "wb") as af:
-                import shutil
-                shutil.copyfileobj(audio.file, af)
 
             config_text = f"""task_0:
  video_path: "{video_path}"
@@ -99,6 +99,57 @@ async def generate(video: UploadFile = File(...), audio: UploadFile = File(...))
 
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Generation timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {type(e).__name__}: {str(e)}")
+
+
+
+@app.post("/generate")
+async def generate(video: UploadFile = File(...), audio: UploadFile = File(...)):
+    """Generate a single video as fast as possible without persistent cache."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            video_path = tmp_path / f"video{Path(video.filename).suffix}"
+            audio_path = tmp_path / f"audio{Path(audio.filename).suffix}"
+
+            with open(video_path, "wb") as vf:
+                import shutil
+                shutil.copyfileobj(video.file, vf)
+            with open(audio_path, "wb") as af:
+                import shutil
+                shutil.copyfileobj(audio.file, af)
+
+            return process_generation(video_path, audio_path)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {type(e).__name__}: {str(e)}")
+
+
+@app.post("/generate-url")
+async def generate_from_urls(video_url: str, audio_url: str):
+    """Generate a single video as fast as possible without persistent cache, downloading from URLs."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            # Download both video and audio asynchronously
+            video_path = tmp_path / "video.mp4"
+            audio_path = tmp_path / "audio.mp3"
+
+            # Download both files concurrently
+            await asyncio.gather(
+                download_file(video_url, video_path),
+                download_file(audio_url, audio_path)
+            )
+
+            return process_generation(video_path, audio_path)
+
     except HTTPException:
         raise
     except Exception as e:
