@@ -51,12 +51,12 @@ cp ./restart.sh /restart.sh
 cp ./restart.sh /root/restart.sh
 chmod +x /restart.sh
 
-export PYTHONPATH="$PWD:$PYTHONPATH"
-export PYTHONPATH="/workspace/MuseTalk:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+export PYTHONPATH="/workspace/MuseTalk:${PYTHONPATH:-}"
 
 echo "🚀 Starting MuseTalk Realtime API server..."
 
-export PYTHONPATH="/workspace/MuseTalk:$PYTHONPATH" && uv run fastapi run fast_api.py --port 8000 --host 0.0.0.0
+export PYTHONPATH="/workspace/MuseTalk:${PYTHONPATH:-}" && uv run fastapi run fast_api.py --port 8000 --host 0.0.0.0
 # uv run fastapi dev realtime_api.py --port 8000 --host 0.0.0.0
 
 
