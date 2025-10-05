@@ -54,15 +54,9 @@ chmod +x /restart.sh
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 export PYTHONPATH="/workspace/MuseTalk:${PYTHONPATH:-}"
 
-echo "🚀 Starting MuseTalk Realtime API server in tmux session..."
+echo "🚀 Starting MuseTalk Realtime API server..."
 
-# Crear sesión tmux para el servidor
-tmux new-session -s api
 uv run fastapi run fast_api.py --port 8000 --host 0.0.0.0
-
-echo "✅ Sesión tmux 'api' creada con el servidor corriendo."
-echo "Para conectarte a la sesión usa: tmux attach -t api"
-echo "Para ver sesiones activas: tmux list-sessions"
 # uv run fastapi dev realtime_api.py --port 8000 --host 0.0.0.0
 
 
