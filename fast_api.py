@@ -54,8 +54,9 @@ def process_generation(video_path: Path, audio_path: Path) -> FileResponse:
             with open(config_path, "w") as cf:
                 cf.write(config_text)
 
-            results_dir = BASE_DIR / "results" / VERSION
+            results_dir = BASE_DIR / "results"
             results_dir.mkdir(parents=True, exist_ok=True)
+            # Note: inference.py will add VERSION to this path automatically
             unet_path = BASE_DIR / "models" / "musetalkV15" / "unet.pth"
             unet_cfg = BASE_DIR / "models" / "musetalkV15" / "musetalk.json"
             output_name = "timespent_generation.mp4"
@@ -83,7 +84,8 @@ def process_generation(video_path: Path, audio_path: Path) -> FileResponse:
             if proc.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"Inference failed (code {proc.returncode})")
 
-            output_file = results_dir / output_name
+            # The inference script adds VERSION to results_dir, so actual output is in results_dir/VERSION/
+            output_file = results_dir / VERSION / output_name
             if not output_file.exists():
                 raise HTTPException(status_code=500, detail="Output video not found")
             if output_file.stat().st_size == 0:
