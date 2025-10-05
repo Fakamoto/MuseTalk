@@ -106,6 +106,11 @@ def process_generation(video_path: Path, audio_path: Path) -> FileResponse:
 
 
 
+@app.get("/status")
+async def status():
+    return {"status": "ok"}
+
+
 @app.post("/generate")
 async def generate(video: UploadFile = File(...), audio: UploadFile = File(...)):
     """Generate a single video as fast as possible without persistent cache."""
